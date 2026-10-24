@@ -143,7 +143,7 @@ const FIND_FN = `
 window.__clickyFind = function(q){
   q = (q||'').toLowerCase().trim();
   const norm = (s) => (s||'').toLowerCase().replace(/\\s+/g,' ').trim();
-  const pool = Array.from(document.querySelectorAll('button,a,[role=button],input,textarea,select,label,[aria-label],[placeholder],[ng-click],.btn,[type=submit],[type=button]'));
+  const pool = Array.from(document.querySelectorAll('button,a,[role=button],input,textarea,select,[contenteditable=true],[contenteditable=""],[role=textbox],[role=searchbox],[role=combobox],label,[aria-label],[placeholder],[ng-click],.btn,[type=submit],[type=button]'));
   let best=null, bestScore=0;
   for (const el of pool){
     const txt=norm(el.innerText||el.textContent); const al=norm(el.getAttribute('aria-label'));

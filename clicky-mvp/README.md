@@ -46,8 +46,11 @@ Ways to use it:
 - **Persistent input server**: one hidden PowerShell process serves every input
   action, removing the ~400 ms cold start per click/keypress (automatic
   one-shot fallback if the server dies).
-- **Browser automation via CDP**: web forms in Chrome/Edge are filled through
-  the Chrome DevTools Protocol — the one reliable way to type inside a browser.
+- **Browser automation via CDP + vision fallback**: web forms Clicky opens are
+  filled through the Chrome DevTools Protocol; for pages already open in your own
+  browser (where CDP can't attach), `typeInto`/`clickOnScreen` vision-locate the
+  field, click to focus, then type — so writing into an open Gmail/Outlook compose
+  body works without you clicking first.
 - **App knowledge pack**: canonical UIA control names for Word, Excel, Chrome,
   Explorer, Settings, Outlook and more, so *"click the address bar"* actually
   finds `Address and search bar`.
@@ -59,8 +62,15 @@ Ways to use it:
   errors, corrective re-planning (up to 2 retries), and structured file logs.
 - **First-run wizard**: connect keys, check mic, learn hold-to-talk, and end
   with Clicky doing one real action.
-- **Fast vision fallback**: a lite Gemini model locates on-screen targets in
-  ~1.2 s; the full model is reserved for screen Q&A and walkthroughs.
+- **Two-tier vision**: a lite Gemini model locates on-screen targets in ~1.2 s;
+  identification and screen Q&A use a subject-first prompt (name the plant/object/
+  error, not the desktop) with a `gemini-2.5-pro` fallback for higher accuracy.
+  For the sharpest reads, **circle the exact object** (Circle-to-ask) so only that
+  crop is sent.
+- **Living cursor**: the pointer leans into its motion, blinks, leaves a faint
+  trail, and wears a state ring — pulsing while listening, spinning while
+  thinking, equalizing while speaking. Talk-key release shows "Thinking…"
+  instantly and the screen capture overlaps transcription to cut perceived lag.
 - Tray icon, global hotkeys, optional autostart, multi-monitor overlays, and
   conversation/agent history persisted locally.
 

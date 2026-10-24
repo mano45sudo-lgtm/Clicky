@@ -12,6 +12,16 @@ const ASSISTANT_SYSTEM = [
   'Be warm, concise, and practical. If something is unclear, ask one short question.'
 ].join(' ');
 
+// Used whenever a screenshot/photo is attached. It stops the model from defaulting
+// to "here is your desktop / app" narration and makes it look at the ACTUAL subject
+// the user is asking about (a plant, an animal, an error, a document, a product...).
+const VISION_SYSTEM = [
+  "You are Clicky's eyes. You are shown an image of the user's screen (or a photo they circled). Your job is to identify the SUBJECT they are asking about - the specific object, plant, animal, person, food, product, place, document, code, error message, or on-screen control - NOT to describe the desktop or list the apps that happen to be open.",
+  'Look closely at the thing in focus. Name it concretely: for a living thing give the species/type and the 2-3 visible features that support it; for an error, quote the key text; for a control, say exactly what it is and what it does. If you are not fully sure, give your best single guess first, then the most likely alternative and what would confirm it - never refuse to look.',
+  'If the question is genuinely about the whole screen or a walkthrough, then describe the interface and the next step.',
+  'Keep replies brief and spoken-friendly: about 2 to 4 sentences, plain text, no markdown, no bullet lists. Be warm, specific and confident.'
+].join(' ');
+
 function currentImage(screenshot) {
   if (screenshot && screenshot.base64) {
     return { mediaType: screenshot.mediaType || 'image/png', base64: screenshot.base64 };
@@ -35,8 +45,11 @@ async function geminiText({ system, text, image, json, fast }) {
     // Locate-only calls (finding a control) want the quickest model first.
     ['gemini-3.1-flash-lite', 'gemini-flash-lite-latest', 'gemini-2.5-flash', 'gemini-3.5-flash'].forEach(push);
   } else {
+    // Answers / identification want accuracy: configured model, then the strongest
+    // vision tiers (Pro first) before falling back to flash, so "what is this" calls
+    // keep working at high confidence even when the preferred model is overloaded.
     push(config.geminiModel);
-    ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest', 'gemini-flash-latest'].forEach(push);
+    ['gemini-2.5-pro', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest', 'gemini-flash-latest'].forEach(push);
   }
 
   const parts = [];
@@ -57,7 +70,7 @@ async function geminiText({ system, text, image, json, fast }) {
         });
         if (res.status === 503 || res.status === 429 || res.status >= 500) {
           lastErr = new Error(`Gemini ${m} HTTP ${res.status}`);
-          await sleep(attempt === 0 ? 900 : 1600);
+          await sleep(attempt === 0 ? 250 : 500);
           continue; // retry same model, then next model
         }
         if (!res.ok) { lastErr = new Error('Gemini HTTP ' + res.status + ' ' + (await res.text()).slice(0, 160)); break; }
@@ -69,7 +82,7 @@ async function geminiText({ system, text, image, json, fast }) {
         lastErr = new Error(`Gemini ${m} returned empty`);
       } catch (e) {
         lastErr = e;
-        await sleep(700);
+        await sleep(200);
       }
     }
   }
@@ -180,14 +193,16 @@ async function call({ system, text, image, json, fast }) {
   return null; // mock handled by callers
 }
 
-// Plain short answer for the voice loop.
+// Plain short answer for the voice loop. When a screenshot is present, answer as
+// VISION_SYSTEM (identify the subject) so object/plant/photo questions are not
+// turned into a description of the surrounding UI.
 async function answer({ question, screenshot }) {
   if (config.mockMode) {
     const seen = screenshot ? 'I can see your screen' : 'I do not have a screenshot';
     return `Sure thing - ${seen}. I am in mock mode; add a vision key (Gemini) in Settings for real answers about "${question || 'what is on my screen'}".`;
   }
   const text = await call({
-    system: ASSISTANT_SYSTEM,
+    system: screenshot ? VISION_SYSTEM : ASSISTANT_SYSTEM,
     text: question && question.trim() ? question.trim() : 'What is on my screen right now?',
     image: currentImage(screenshot)
   });
@@ -215,4 +230,4 @@ async function json({ system, text, screenshot, fallback, fast }) {
   }
 }
 
-module.exports = { answer, chat, json, ASSISTANT_SYSTEM };
+module.exports = { answer, chat, json, ASSISTANT_SYSTEM, VISION_SYSTEM };

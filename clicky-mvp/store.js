@@ -39,7 +39,7 @@ function defaults() {
     agentShortcut: 'Alt+G', // start a Clicky Agent task
     agentWakePhrase: 'clicky agent',
     handsFree: true, // conversation uses voice-activity detection (no hold)
-    vadSilenceMs: 900, // stop an utterance after this much trailing silence
+    vadSilenceMs: 650, // stop an utterance after this much trailing silence
 
     // --- Agent ---
     agentAllowFileWrites: true,

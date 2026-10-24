@@ -244,8 +244,14 @@ async function onHotkeyUp() {
   }
 
   overlays.sendToDisplay('clicky:record', { on: false }, cursorDisplayId());
+  // Give immediate feedback the moment you let go - do not leave it sitting on
+  // "Listening..." through the whole transcription round-trip.
+  setState('thinking', { question: '' });
   const buffer = await waitAudio(6000);
   console.log(`[clicky] captured ${buffer ? buffer.length : 0} bytes of audio, transcribing...`);
+  // Grab the screen in parallel with STT so a screen answer is not paying for the
+  // capture AND the transcription back-to-back; respond() reuses this if it needs it.
+  const shotP = captureCursorDisplay().catch(() => null);
   let question = '';
   try {
     question = await providers.stt.transcribe(buffer);
@@ -254,13 +260,13 @@ async function onHotkeyUp() {
   }
   log.info('voice', 'transcript', { bytes: buffer ? buffer.length : 0, question });
 
-  await handleSpokenCommand(question);
+  await handleSpokenCommand(question, shotP);
 }
 
 // A spoken command: DO it. Route through the agent so "open docs" opens and
 // "create an essay" writes a file, then speak the outcome. Only falls back to a
 // plain answer when there is no real LLM driving the agent (mock mode).
-async function handleSpokenCommand(question) {
+async function handleSpokenCommand(question, shotP) {
   if (!question) {
     const answer = 'I did not catch that. Hold Ctrl, speak, then let go.';
     setState('speaking', { answer });
@@ -294,7 +300,7 @@ async function handleSpokenCommand(question) {
   log.info('voice', 'routing', { question, walkthrough, screenAsk, actionVerb });
   try {
     if (walkthrough) await runWalkthrough(question);
-    else if (screenAsk && !actionVerb) await respond(question);
+    else if (screenAsk && !actionVerb) await respond(question, shotP ? await shotP : null);
     else await startAgent(question);
   } catch (e) {
     log.error('voice', 'command failed', { error: e.message });
@@ -361,6 +367,7 @@ async function handleUtterance(buffer) {
   }
 
   busy = true;
+  const shotP = captureCursorDisplay().catch(() => null); // overlap with STT
   let question = '';
   try {
     question = await providers.stt.transcribe(buffer);
@@ -386,7 +393,7 @@ async function handleUtterance(buffer) {
     return;
   }
 
-  await respond(question);
+  await respond(question, await shotP);
   afterTurn();
 }
 

@@ -2,6 +2,47 @@
 
 All notable changes to HeyClicky are documented here.
 
+## [Unreleased]
+
+### Added
+- **Cursor micro-interactions**: the pointer now leans into its direction of
+  travel, occasionally blinks, grows with speed, and leaves a faint motion
+  trail. A state-reactive presence ring surrounds it - expanding emerald rings
+  while listening, an amber orbiting spinner while thinking, and a pulsing
+  sky equalizer while speaking.
+
+### Changed
+- **Faster perceived voice**: releasing the talk key now shows "Thinking..."
+  immediately, and the screen capture runs in parallel with transcription
+  instead of after it (hands-free and push-to-talk both benefit).
+- **Snappier turn-taking**: default VAD silence lowered 900 ms -> 650 ms.
+- **Shorter Gemini retry waits**: fallback backoff trimmed (900/1600/700 ms ->
+  250/500/200 ms) so 503 spikes cost far less wall-clock time.
+- **Vision identification**: screen/photo answers now use a dedicated
+  `VISION_SYSTEM` prompt that names the *subject* (plant, animal, object,
+  error, document) instead of narrating the surrounding UI. Fix for "show a
+  leaf, get a desktop description."
+- **Higher-accuracy vision chain**: identification calls fall through to
+  `gemini-2.5-pro` before flash when the preferred model is unavailable, so
+  "what is this" answers stay confident under load.
+
+### Fixed
+- **Web/email field detection**: `typeInto` and `clickOnScreen` now fall back
+  to a strong-model vision locate (find the field, click to focus, then type),
+  so writing into an already-open Gmail/Outlook compose body works without the
+  user clicking first. CDP matcher also sees `contenteditable`/ARIA textboxes.
+- **Already-open browser guidance**: the planner no longer assumes CDP can
+  attach to the user's own browser; it drives visible web pages by looking.
+- **Browser actions no longer need a manual click**: `browserClick`/`browserType`
+  now self-heal - if CDP cannot reach the page they fall back to the vision
+  locate + real click/type path instead of just failing.
+- **Confidence-gated pointing**: `visionLocate` asks the model for a confidence
+  score and refuses a low-confidence (<0.55) guess from the quick model, so it
+  escalates to the strong model instead of misclicking off-target.
+- **UIA errors no longer abort detection**: a thrown error in the UIA fast path
+  of `clickOnScreen`/`typeInto` used to return immediately and skip the vision
+  fallback; it now falls through, so web fields still get found by looking.
+
 ## [0.1.0] - 2026-02 (beta)
 
 Launch-readiness milestone release for Windows.

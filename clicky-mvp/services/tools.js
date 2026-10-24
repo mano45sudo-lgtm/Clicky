@@ -31,6 +31,30 @@ function bindScreen(api) {
   screenApi = api || null;
 }
 
+// LOOK at a fresh screenshot and return the on-screen position of a described
+// control/field as 0..1 fractions. fast=true uses the quick lite model for common
+// controls; the web/custom path calls with fast=false (strong model) for higher
+// detection accuracy. Shared by clickOnScreen and typeInto so web fields get found.
+async function visionLocate(target, { fast } = {}) {
+  const shot = await capturePrimaryDisplay().catch(() => null);
+  if (!shot) return { found: false, error: 'could not capture the screen' };
+  const sys =
+    'You locate ONE UI element or input field in a screenshot and return its exact position. ' +
+    'Reply JSON {"found":bool,"confidence":number,"x":number,"y":number,"label":string}. ' +
+    'x,y are the CENTER of the element as fractions of the image width and height (0..1, top-left origin). ' +
+    'For a text field, textarea, search box, or a message/compose body, point at the MIDDLE of the empty editable area, not its label, icon, or border. ' +
+    'For a button or link, point at its text. Scan the whole image including web pages, dialogs, and toolbars. ' +
+    'confidence is 0..1 = how sure you are this is the RIGHT element; if you can only guess, keep confidence low.';
+  const data = await llm.json({ system: sys, text: `Find this on screen: "${target}"`, screenshot: shot, fast, fallback: { found: false } });
+  if (!data || !data.found || typeof data.x !== 'number' || typeof data.y !== 'number') return { found: false };
+  const confidence = typeof data.confidence === 'number' ? data.confidence : 0.85;
+  // A low-confidence point from the quick model is worse than no point: report
+  // not-found so the caller escalates to the strong model instead of misclicking.
+  if (confidence < 0.55) return { found: false, low: true, confidence };
+  const c01 = (v) => Math.max(0, Math.min(1, v));
+  return { found: true, confidence, x: c01(data.x), y: c01(data.y), label: data.label };
+}
+
 // Friendly names -> something Windows can actually launch (exe, URI, or file).
 const APP_ALIASES = {
   notepad: 'notepad', word: 'winword', excel: 'excel', powerpoint: 'powerp',
@@ -284,7 +308,9 @@ const tools = {
         for (const name of cands) {
           const ui = await control.clickName(name);
           if (ui && ui.found) return { found: true, via: 'uia', x: ui.x, y: ui.y, target };
-          if (ui && ui.error) return { found: false, error: ui.error, target };
+          // On notfound OR a UIA error, keep trying the other candidate names and
+          // then fall through to the vision locate. Returning early here would skip
+          // the vision fallback entirely (why web clicks used to need a manual click).
         }
       } else {
         for (const name of cands) {
@@ -295,22 +321,17 @@ const tools = {
           }
         }
       }
-      // 2) Fallback for web/custom UI that UIA can't see: Gemini locates it on a screenshot.
-      const shot = await capturePrimaryDisplay().catch(() => null);
-      if (!shot) return { error: 'could not capture the screen' };
-      const sys =
-        'You locate ONE UI element in a screenshot. Return JSON {"found":bool,"x":number,"y":number,"label":string}. ' +
-        'x,y are the CENTER of the element as fractions of the image width and height (0..1, top-left origin). ' +
-        'If it is not visible, return {"found":false}.';
-      const data = await llm.json({ system: sys, text: `Find this on screen: "${target}"`, screenshot: shot, fast: true, fallback: { found: false } });
-      if (!data || !data.found || typeof data.x !== 'number' || typeof data.y !== 'number') {
-        return { found: false, error: 'I could not find: ' + target };
+      // 2) Fallback for web/custom UI that UIA can't see: locate it on a screenshot.
+      //    Try the quick model first; if it misses OR is low-confidence, escalate to
+      //    the strong model so web compose fields and oddly-labelled controls land.
+      let loc = await visionLocate(target, { fast: true });
+      if (!loc.found && !loc.error) loc = await visionLocate(target, { fast: false });
+      if (!loc.found) {
+        return { found: false, error: loc.error || ('I could not find: ' + target) };
       }
-      const x = Math.max(0, Math.min(1, data.x));
-      const y = Math.max(0, Math.min(1, data.y));
-      const { px, py } = fracToPx(x, y);
+      const { px, py } = fracToPx(loc.x, loc.y);
       const r = await control.run(double ? 'doubleclick' : 'click', { x: px, y: py });
-      return { ...r, found: true, via: 'vision', x, y, target };
+      return { ...r, found: true, via: 'vision', x: loc.x, y: loc.y, target };
     }
   },
   typeText: {
@@ -347,20 +368,34 @@ const tools = {
       for (const name of knowledge.candidateNames(t)) {
         const r = await control.typeName(name, body);
         if (r && r.found) return { typed: true, via: 'uia', chars: body.length, target: t };
-        if (r && r.error) return { typed: false, error: r.error, target: t };
+        // Ignore a UIA error here too: keep going so we still reach the vision
+        // fallback below (web fields are exactly where UIA errors / finds nothing).
         const c = await control.clickName(name);
         if (c && c.found) {
-          await new Promise((res) => setTimeout(res, 250));
+          await new Promise((res) => setTimeout(res, 350));
           await control.type(body);
           return { typed: true, via: 'click+type', chars: body.length, target: t };
         }
+      }
+      // UIA is blind inside Chrome/Edge web fields (Gmail/Outlook compose, search
+      // boxes, React inputs). Fall back to looking at the screen: find the field,
+      // click to focus it, then type real keystrokes. This is what makes "write the
+      // email in the message body" land without the user clicking first.
+      let loc = await visionLocate(t, { fast: true });
+      if (!loc.found && !loc.error) loc = await visionLocate(t, { fast: false });
+      if (loc.found) {
+        const { px, py } = fracToPx(loc.x, loc.y);
+        await control.run('click', { x: px, y: py });
+        await new Promise((res) => setTimeout(res, 400));
+        await control.type(body);
+        return { typed: true, via: 'vision', chars: body.length, target: t };
       }
       return { typed: false, error: 'field not found: ' + t, target: t };
     },
   },
   composeEmail: {
     description:
-      'Draft an email with ZERO manual steps: opens a pre-filled Gmail compose window (To, Subject, Body) in the browser. Use for ANY "write/draft/compose an email" request instead of trying to click fields. It only prepares the draft; it never sends.',
+      'Draft a NEW email by opening a pre-filled Gmail compose window (To, Subject, Body) in the browser. Use only when NO compose window is open yet; if the user already has a new-message window on screen, fill it with typeInto/clickOnScreen + typeText instead. It only prepares the draft; it never sends.',
     parameters: {
       type: 'object',
       properties: { to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } },
@@ -404,19 +439,25 @@ const tools = {
     parameters: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'] },
     run: async ({ target }) => {
       const r = await cdp.clickText(target);
-      if (r && r.error) return r;
-      return r && r.found ? { found: true, via: 'cdp', target } : { found: false, error: 'I could not find on the page: ' + target, target };
+      if (r && r.found) return { found: true, via: 'cdp', target };
+      // No CDP browser (the page is in the user's own Chrome/Edge) or the element
+      // was not in that DOM: fall back to looking at the real screen and clicking,
+      // so a browser action still happens without the user clicking first.
+      const v = await tools.clickOnScreen.run({ target });
+      return { ...v, via: v.found ? (v.via || 'vision') : v.via, fallbackFrom: 'cdp', target };
     }
   },
   browserType: {
     description:
-      'Type text INTO a named web input/textarea by its label, placeholder, aria-label or name (e.g. target "Email", "Password", "Search"). Sets the value and fires input/change events so frameworks (React/Gmail) register it. One step, no separate click. Returns typed:true/false.',
+      'Type text INTO a named web input/textarea by its label, placeholder, aria-label or name (e.g. target "Email", "Password", "Search"). Sets the value and fires input/change events so frameworks (React/Gmail) register it. Falls back to locating the field on screen and typing. One step, no separate click. Returns typed:true/false.',
     parameters: { type: 'object', properties: { target: { type: 'string' }, text: { type: 'string' } }, required: ['target', 'text'] },
     run: async ({ target, text }) => {
       const body = String(text == null ? '' : text);
       const r = await cdp.fillField(target, body);
-      if (r && r.error) return r;
-      return r && r.found ? { typed: true, via: 'cdp', chars: body.length, target } : { typed: false, error: 'field not found on page: ' + target, target };
+      if (r && r.found) return { typed: true, via: 'cdp', chars: body.length, target };
+      // Same self-heal as browserClick: vision-locate the field, click to focus, type.
+      const v = await tools.typeInto.run({ target, text: body });
+      return { ...v, fallbackFrom: 'cdp', target };
     }
   },
   createNote: {

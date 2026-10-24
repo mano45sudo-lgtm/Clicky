@@ -33,6 +33,12 @@ const velocity = { x: 0, y: 0 };
 let state = 'idle';
 let frame = 0;
 let myDisplayId = null;
+// Micro-interaction state: eased lean into the direction of travel, a periodic
+// eye-blink squash, and a short position trail for a motion echo.
+let tilt = 0;
+let blinkAt = 1400;
+let blinkUntil = 0;
+const trail = [];
 
 const LABELS = { idle: '', listening: 'Listening...', thinking: 'Thinking...', speaking: 'Clicky' };
 
@@ -491,6 +497,9 @@ function drawFx() {
   const W = fxCanvas.width, H = fxCanvas.height, S = Math.min(W, H);
   fctx.clearRect(0, 0, W, H);
 
+  // Living presence around the pointer (always on, independent of the guide).
+  drawPresence();
+
   // Selection ellipse: the area the user circled to ask about.
   if (selRect) {
     const t = performance.now() / 1000;
@@ -550,7 +559,11 @@ function drawCursor() {
   ctx.save();
   // Arrow tip (path origin ~0.5,0.5 in its 20x20 box) sits on the cursor hotspot.
   ctx.translate(17, 12);
-  ctx.scale(2.5, 2.5);
+  // Lean the arrow into horizontal movement so it feels like it is swinging
+  // through the air, and squash it flat for a few frames on a blink.
+  ctx.rotate(tilt);
+  const blink = performance.now() < blinkUntil ? 0.24 : 1;
+  ctx.scale(2.5, 2.5 * blink);
   ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
   ctx.shadowBlur = 2.5;
   ctx.shadowOffsetX = 0.6;
@@ -567,10 +580,72 @@ function drawCursor() {
 }
 
 function stateScale() {
-  if (state === 'listening') return 1 + Math.sin(frame / 8) * 0.05;
-  if (state === 'thinking') return 1 + Math.sin(frame / 6) * 0.03;
-  if (state === 'speaking') return 1 + Math.sin(frame / 5) * 0.06;
-  return 1 + Math.sin(frame / 40) * 0.015;
+  // A little extra size while the pointer is actually moving makes it feel alive.
+  const boost = Math.min(0.14, Math.hypot(velocity.x, velocity.y) * 0.006);
+  if (state === 'listening') return 1 + Math.sin(frame / 8) * 0.05 + boost;
+  if (state === 'thinking') return 1 + Math.sin(frame / 6) * 0.03 + boost;
+  if (state === 'speaking') return 1 + Math.sin(frame / 5) * 0.06 + boost;
+  return 1 + Math.sin(frame / 40) * 0.015 + boost * 0.5;
+}
+
+// State-reactive presence drawn around the pointer: a soft breathing halo when
+// idle, expanding rings while listening, an orbiting spinner while thinking, and
+// a pulsing equalizer of dots while speaking. Plus a faint motion trail.
+function drawPresence() {
+  const now = performance.now() / 1000;
+  const accent = STATE_ACCENT[state] || STATE_ACCENT.idle;
+  const cx = pos.x;
+  const cy = pos.y;
+
+  // Motion echo: fading dots along where the pointer just travelled.
+  for (let i = 0; i < trail.length; i++) {
+    const p = trail[i];
+    const k = (i + 1) / trail.length;
+    fctx.globalAlpha = k * 0.15;
+    fctx.fillStyle = accent;
+    fctx.beginPath();
+    fctx.arc(p.x, p.y, 1.5 + k * 3, 0, Math.PI * 2);
+    fctx.fill();
+  }
+  fctx.globalAlpha = 1;
+
+  fctx.strokeStyle = accent;
+  fctx.fillStyle = accent;
+  fctx.lineCap = 'round';
+
+  if (state === 'listening') {
+    for (let i = 0; i < 3; i++) {
+      const ph = (now * 1.4 + i / 3) % 1;
+      fctx.globalAlpha = (1 - ph) * 0.5;
+      fctx.lineWidth = 3;
+      fctx.beginPath();
+      fctx.arc(cx, cy, 14 + ph * 46, 0, Math.PI * 2);
+      fctx.stroke();
+    }
+  } else if (state === 'thinking') {
+    const a = now * 3.2;
+    fctx.globalAlpha = 0.9;
+    fctx.lineWidth = 4;
+    fctx.beginPath(); fctx.arc(cx, cy, 26, a, a + Math.PI * 0.9); fctx.stroke();
+    fctx.beginPath(); fctx.arc(cx, cy, 26, a + Math.PI, a + Math.PI * 1.9); fctx.stroke();
+  } else if (state === 'speaking') {
+    const n = 10;
+    fctx.globalAlpha = 0.85;
+    for (let i = 0; i < n; i++) {
+      const ang = (i / n) * Math.PI * 2 + now * 1.2;
+      const rr = 24 + 6 + Math.sin(now * 7 + i) * 6;
+      fctx.beginPath();
+      fctx.arc(cx + Math.cos(ang) * rr, cy + Math.sin(ang) * rr, 2.6, 0, Math.PI * 2);
+      fctx.fill();
+    }
+  } else {
+    fctx.globalAlpha = 0.16;
+    fctx.lineWidth = 2;
+    fctx.beginPath();
+    fctx.arc(cx, cy, 18 + Math.sin(now * 2) * 2.2, 0, Math.PI * 2);
+    fctx.stroke();
+  }
+  fctx.globalAlpha = 1;
 }
 
 function tick() {
@@ -581,6 +656,18 @@ function tick() {
   velocity.y *= DAMPING;
   pos.x += velocity.x;
   pos.y += velocity.y;
+
+  // Ease the lean toward the current horizontal velocity, record the trail, and
+  // fire a quick blink every ~2.6-5.2s so the pointer reads as a living buddy.
+  const lean = Math.max(-0.5, Math.min(0.5, velocity.x * 0.03));
+  tilt += (lean - tilt) * 0.18;
+  trail.push({ x: pos.x, y: pos.y });
+  if (trail.length > 16) trail.shift();
+  const nowMs = performance.now();
+  if (nowMs > blinkAt) {
+    blinkUntil = nowMs + 90;
+    blinkAt = nowMs + 2600 + Math.random() * 2600;
+  }
 
   drawCursor();
   drawFx();
