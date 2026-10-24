@@ -25,6 +25,19 @@
         pointer-events: none;
       }
 
+      /* Full-screen layers for agent drawing and cursor guidance. */
+      #draw,
+      #fx {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        pointer-events: none;
+      }
+      #draw { z-index: 0; }
+      #fx { z-index: 1; }
+
       body[data-state="listening"] canvas { filter: drop-shadow(0 0 6px #34d399); }
       body[data-state="thinking"]  canvas { filter: drop-shadow(0 0 6px #fbbf24); }
       body[data-state="speaking"]  canvas { filter: drop-shadow(0 0 6px #60a5fa); }
@@ -33,16 +46,18 @@
         position: fixed;
         top: 0;
         left: 0;
-        max-width: 360px;
+        max-width: 340px;
         margin: 0;
-        padding: 10px 14px;
-        border-radius: 14px;
-        background: rgba(17, 24, 39, 0.92);
-        color: #f9fafb;
-        font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+        padding: 7px 13px 9px;
+        border-radius: 13px;
+        border-top-left-radius: 4px;
+        background: #ecfdf5;
+        color: #047857;
+        border: 1px solid rgba(16, 185, 129, 0.45);
+        font: 600 13.5px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
         white-space: pre-wrap;
         word-wrap: break-word;
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
         will-change: transform;
         pointer-events: none;
         opacity: 0;
@@ -52,12 +67,17 @@
 
       #caption .label {
         display: block;
-        margin-bottom: 4px;
+        margin-bottom: 2px;
         font-size: 11px;
-        letter-spacing: 0.04em;
+        font-weight: 700;
+        letter-spacing: 0.03em;
         text-transform: uppercase;
-        color: #9ca3af;
+        opacity: 0.7;
       }
+
+      body[data-state="thinking"] #caption { background: #fffbeb; color: #b45309; border-color: rgba(245, 158, 11, 0.5); }
+      body[data-state="speaking"] #caption { background: #f0f9ff; color: #0369a1; border-color: rgba(14, 165, 233, 0.5); }
+      body[data-state="listening"] #caption { background: #ecfdf5; color: #047857; border-color: rgba(52, 211, 153, 0.6); }
 
       #caption.visible { opacity: 1; }
 
@@ -107,13 +127,21 @@
       #agent.visible { opacity: 1; transform: translateY(0); }
       #agent .h { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: #93c5fd; margin-bottom: 6px; }
       #agent .goal { margin: 0 0 8px; color: #f9fafb; }
+      #agent .goal.err { color: #fca5a5; }
       #agent ul { margin: 0; padding-left: 16px; }
       #agent li { list-style: disc; margin: 2px 0; color: #d1d5db; }
       #agent li.running { color: #fbbf24; }
       #agent li.done { color: #34d399; }
+      #agent li.error { color: #f87171; }
+      #agent li.preview { color: #93c5fd; list-style: none; margin-left: -16px; }
+      #agent.confirming { background: rgba(60, 12, 16, 0.95); box-shadow: 0 0 0 2px #ef4444, 0 8px 30px rgba(0, 0, 0, 0.5); animation: clickyPulse 1.1s ease-in-out infinite; }
+      #agent.confirming .goal { color: #fecaca; font-weight: 600; }
+      @keyframes clickyPulse { 0%, 100% { box-shadow: 0 0 0 2px #ef4444, 0 8px 30px rgba(0, 0, 0, 0.5); } 50% { box-shadow: 0 0 0 4px #f87171, 0 8px 30px rgba(0, 0, 0, 0.5); } }
     </style>
   </head>
   <body data-state="idle">
+    <canvas id="draw" aria-hidden="true"></canvas>
+    <canvas id="fx" aria-hidden="true"></canvas>
     <canvas id="clicky" width="84" height="84" aria-hidden="true"></canvas>
     <div id="caption" role="status" aria-live="polite">
       <span class="label"></span>

@@ -81,18 +81,25 @@ if (window.clicky) {
       agentMsg.appendChild(agentSteps);
     } else if (p.type === 'step' && agentSteps) {
       const line = document.createElement('div');
-      line.className = 'step ' + (p.state === 'done' ? 'done' : 'running');
-      line.textContent = p.state === 'done' ? p.tool + ' \u2713' : 'Running ' + p.tool + (p.reason ? ' - ' + p.reason : '');
-      if (p.state === 'done') {
-        const running = [...agentSteps.children].find((c) => c.textContent.startsWith('Running ' + p.tool));
-        if (running) {
-          running.className = 'step done';
-          running.textContent = p.tool + ' \u2713';
-          return;
-        }
+      const label = p.label || p.tool;
+      if (p.state === 'running') {
+        line.className = 'step running';
+        line.textContent = 'Running ' + label + (p.reason ? ' - ' + p.reason : '');
+      } else if (p.state === 'preview') {
+        line.className = 'step';
+        line.textContent = '\u25e1 ' + label + ' (planned)';
+      } else {
+        line.className = 'step ' + (p.state === 'done' ? 'done' : 'error');
+        line.textContent = label + (p.state === 'done' ? ' \u2713' : ' \u2717 ' + (p.detail || 'failed'));
+        const running = [...agentSteps.children].find((c) => c.dataset && c.dataset.idx === String(p.index));
+        if (running) { running.replaceWith(line); log.scrollTop = log.scrollHeight; return; }
       }
+      line.dataset.idx = String(p.index);
       agentSteps.appendChild(line);
       log.scrollTop = log.scrollHeight;
+    } else if (p.type === 'confirm') {
+      if (p.decision) return; // the gate cleared
+      addAgentConfirm(p);
     } else if (p.type === 'done') {
       const line = document.createElement('div');
       line.className = 'step done';
@@ -101,6 +108,34 @@ if (window.clicky) {
       log.scrollTop = log.scrollHeight;
     }
   });
+
+  // A destructive action is waiting for an explicit Allow/Block decision. The
+  // STOP key always works; these buttons are the convenient path here.
+  function addAgentConfirm(p) {
+    const box = add('agent', '\u26a0 Clicky wants to: ' + (p.label || p.tool));
+    box.style.borderLeft = '3px solid #ef4444';
+    const why = document.createElement('div');
+    why.className = 'step';
+    why.style.color = '#fca5a5';
+    why.textContent = p.reason || 'This is hard to undo.';
+    box.appendChild(why);
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;margin-top:8px';
+    const allow = document.createElement('button');
+    allow.className = 'primary';
+    allow.textContent = 'Allow once';
+    const block = document.createElement('button');
+    block.className = 'danger';
+    block.textContent = 'Block';
+    const stopb = document.createElement('button');
+    stopb.textContent = 'Stop agent';
+    allow.onclick = () => { allow.disabled = block.disabled = stopb.disabled = true; window.clicky.agentConfirm('allow'); };
+    block.onclick = () => { allow.disabled = block.disabled = stopb.disabled = true; window.clicky.agentConfirm('block'); };
+    stopb.onclick = () => { allow.disabled = block.disabled = stopb.disabled = true; window.clicky.agentCancel(); };
+    row.append(allow, block, stopb);
+    box.appendChild(row);
+    box.scrollIntoView();
+  }
 
   // Load recent history once.
   window.clicky.historyGet().then((h) => {

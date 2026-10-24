@@ -1,5 +1,5 @@
 const path = require('path');
-const { app, BrowserWindow, screen, ipcMain, globalShortcut, Tray, Menu, nativeImage, session } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, globalShortcut, Tray, Menu, nativeImage, session, shell } = require('electron');
 
 const providers = require('./services/providers');
 const { captureCursorDisplay, capturePrimaryDisplay } = require('./services/capture');
@@ -9,8 +9,11 @@ const { Agent } = require('./services/agent');
 const walkthroughSvc = require('./services/walkthrough');
 const memory = require('./services/memory');
 const integrations = require('./services/integrations');
+const tools = require('./services/tools');
 const config = require('./config');
 const store = require('./store');
+const log = require('./services/log');
+const control = require('./services/control');
 
 const PRELOAD = path.join(__dirname, 'preload.js');
 const overlays = new Overlays(PRELOAD);
@@ -18,6 +21,7 @@ const overlays = new Overlays(PRELOAD);
 let tray = null;
 let commandWin = null;
 let settingsWin = null;
+let onboardWin = null;
 let currentAgent = null;
 let audioWait = null;
 
@@ -30,6 +34,7 @@ let conversationMode = false; // optional hands-free loop (Alt+V)
 function sendToUI(channel, payload) {
   overlays.send(channel, payload);
   if (commandWin && !commandWin.isDestroyed()) commandWin.webContents.send(channel, payload);
+  if (onboardWin && !onboardWin.isDestroyed()) onboardWin.webContents.send(channel, payload);
 }
 
 function setState(next, extra = {}) {
@@ -50,7 +55,7 @@ function cursorDisplayId() {
 
 function mockAnswerMessage(errMessage) {
   return config.mockMode
-    ? 'I am in mock mode and hit a snag. Add a Sarvam key in Settings for real answers.'
+    ? 'I am in mock mode and hit a snag. Add a Groq or Gemini key in Settings for real answers.'
     : `Sorry, that did not work (${errMessage || 'unknown error'}).`;
 }
 
@@ -126,9 +131,9 @@ async function onHotkeyUp() {
   try {
     question = await providers.stt.transcribe(buffer);
   } catch (e) {
-    console.error('[stt] failed', e.message);
+    log.error('stt', 'transcribe failed', { error: e.message });
   }
-  console.log(`[clicky] heard: ${JSON.stringify(question)}`);
+  log.info('voice', 'transcript', { bytes: buffer ? buffer.length : 0, question });
 
   await handleSpokenCommand(question);
 }
@@ -154,10 +159,26 @@ async function handleSpokenCommand(question) {
   }
 
   busy = true;
+  const q = question.toLowerCase();
+  // Eyes-on paths, decided before "do it": a walkthrough (vision steps + ring on
+  // the exact control) or a question about what is visible (vision answer). An
+  // imperative action verb always wins over a screen ask, so "summarize this
+  // folder" still runs the agent while "what is this button" uses the eyes.
+  const actionVerb = /^\s*(open|launch|start|close|create|make|write|draw|save|delete|rename|move|copy|search|find|list|summarize|read|add|set|run|execute|play|download|organize|clean|type|click|send|email|book|turn|change|install|print|zoom|minimize|maximize|shutdown|restart|lock|mute|go\s+to|navigate)\b/.test(q)
+    // "do/fill/put this in excel|here|my sheet|this document" is an action on the
+    // LIVE window, not a screen question - force it to the agent so Clicky edits
+    // the open app instead of answering conversationally or making a side file.
+    || (/\b(excel|word|powerpoint|notepad|spreadsheet|workbook|worksheet|table|cell|row|column|sheet|document|doc|form|field)\b/.test(q)
+        && /\b(do|make|write|fill|enter|add|put|type|edit|update|change|fix|complete|work|prepare|generate|build|create)\b/.test(q));
+  const walkthrough = /walk me through|step[ -]by[ -]step|guide me|show me how|how do i|how to|how can i|teach me|point (to|at)|where (do|should|can|wo) i (click|go|find)|which (button|tab|field|one)/.test(q);
+  const screenAsk = /\b(this|screen|here|panel|button|window|menu|page|toolbar|dialog)\b|(what|can|do) you see|look at (this|the)|on (my|the) screen|explain (this|what)|what (does|is) this|describe (this|the|what)/.test(q);
+  log.info('voice', 'routing', { question, walkthrough, screenAsk, actionVerb });
   try {
-    await startAgent(question);
+    if (walkthrough) await runWalkthrough(question);
+    else if (screenAsk && !actionVerb) await respond(question);
+    else await startAgent(question);
   } catch (e) {
-    console.error('[agent] failed', e.message);
+    log.error('voice', 'command failed', { error: e.message });
   }
   busy = false;
 }
@@ -271,31 +292,75 @@ async function runWalkthrough(request) {
 }
 
 // --- Background agent -------------------------------------------------------
+let stopHotkeyRegistered = false;
+function registerStopHotkey() {
+  if (stopHotkeyRegistered) return;
+  const acc = (store.read().stopShortcut || 'Escape').trim();
+  if (!acc) return;
+  try {
+    stopHotkeyRegistered = globalShortcut.register(acc, () => cancelAgent());
+  } catch (e) {
+    stopHotkeyRegistered = false;
+  }
+}
+
+function unregisterStopHotkey() {
+  if (!stopHotkeyRegistered) return;
+  const acc = (store.read().stopShortcut || 'Escape').trim();
+  try {
+    if (acc) globalShortcut.unregister(acc);
+  } catch (e) {}
+  stopHotkeyRegistered = false;
+}
+
 async function startAgent(goal) {
   if (!goal) return;
   if (currentAgent) currentAgent.cancel();
 
   const agent = new Agent();
   currentAgent = agent;
+  registerStopHotkey(); // STOP is only live while an agent is running
 
   agent.on('status', (p) => sendToUI('clicky:agent', { type: 'status', ...p }));
   agent.on('step', (p) => sendToUI('clicky:agent', { type: 'step', ...p }));
+  agent.on('confirm', (p) => sendToUI('clicky:agent', { type: 'confirm', ...p }));
   agent.on('done', async (p) => {
+    unregisterStopHotkey();
     sendToUI('clicky:agent', { type: 'done', ...p });
     setState('speaking', { answer: p.summary });
     sendResult({ question: 'Agent: ' + p.goal, answer: p.summary });
-    await providers.tts.speak(p.summary).catch(() => {});
+    // Speak the outcome only when confirmations are on; errors are always spoken.
+    if (store.read().ttsConfirmations || p.failures || p.cancelled) {
+      await providers.tts.speak(p.summary).catch(() => {});
+    }
     setState('idle');
+  });
+
+  agent.on('confirm', (p) => {
+    // Read the safety prompt aloud so a non-technical user knows to look up.
+    if (!p.decision && store.read().ttsConfirmations !== false) {
+      providers.tts.speak('Wait - I am about to ' + (p.label || 'do something hard to undo') + '. Confirm in the Clicky window, or press Escape to stop.').catch(() => {});
+      openCommandWindow();
+    }
   });
 
   sendToUI('clicky:agent', { type: 'start', goal });
   setState('thinking', { question: 'Agent: ' + goal });
-  await agent.run(goal);
-  currentAgent = null;
+  try {
+    await agent.run(goal);
+  } finally {
+    unregisterStopHotkey();
+    currentAgent = null;
+  }
 }
 
 function cancelAgent() {
   if (currentAgent) currentAgent.cancel();
+  unregisterStopHotkey();
+}
+
+function resolveAgentConfirm(decision) {
+  if (currentAgent) currentAgent.resolveConfirm(String(decision || 'block'));
 }
 
 // --- Windows ----------------------------------------------------------------
@@ -336,6 +401,24 @@ function openSettingsWindow() {
   settingsWin.on('closed', () => { settingsWin = null; });
 }
 
+function openOnboardWindow() {
+  if (onboardWin && !onboardWin.isDestroyed()) {
+    onboardWin.focus();
+    return;
+  }
+  onboardWin = new BrowserWindow({
+    width: 560,
+    height: 680,
+    minWidth: 480,
+    title: 'Welcome to HeyClicky',
+    backgroundColor: '#0b1220',
+    autoHideMenuBar: true,
+    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false }
+  });
+  onboardWin.loadFile('onboard.html');
+  onboardWin.on('closed', () => { onboardWin = null; });
+}
+
 // --- Tray -------------------------------------------------------------------
 function trayIcon() {
   // Draw a 16x16 disc glyph as a raw BGRA bitmap. Windows nativeImage cannot
@@ -369,6 +452,8 @@ function createTray() {
     { label: 'Talk (hold Ctrl, or press Alt+V)', click: openCommandWindow },
     { label: 'Ask about my screen', click: () => { if (!busy) { busy = true; respond('What is on my screen right now? Summarize what I am looking at and suggest a next step.'); } } },
     { label: 'Walk me through this', click: () => runWalkthrough('') },
+    { type: 'separator' },
+    { label: 'STOP the agent', accelerator: 'Esc', click: () => cancelAgent() },
     { label: 'Settings', click: openSettingsWindow },
     { type: 'separator' },
     { label: 'Quit HeyClicky', click: () => app.quit() }
@@ -423,6 +508,7 @@ function registerIpc() {
   ipcMain.handle('clicky:walkthrough', (_e, { text }) => runWalkthrough(String(text || '').trim()));
   ipcMain.handle('clicky:agent', (_e, { goal }) => startAgent(String(goal || '').trim()));
   ipcMain.handle('clicky:agent-cancel', () => cancelAgent());
+  ipcMain.handle('clicky:agent-confirm', (_e, { decision }) => resolveAgentConfirm(decision));
 
   ipcMain.handle('settings:get', () => store.read());
   ipcMain.handle('settings:save', (_e, partial) => applySettings(partial || {}));
@@ -430,6 +516,27 @@ function registerIpc() {
     conversation: memory.recentConversations(40),
     tasks: memory.allTasks()
   }));
+
+  // Desktop-control self-check for the Settings / onboarding "test" button.
+  ipcMain.handle('clicky:diagnose', async () => {
+    const r = await control.findName('__clicky_probe__');
+    if (r && r.error) return { ok: false, detail: r.error };
+    return { ok: true, detail: 'Windows input driver is working (UIA + keyboard). Antivirus is not blocking it.' };
+  });
+  ipcMain.handle('clicky:open-exclusions', () => {
+    // Jump straight to the Windows Defender exclusion page (best-effort).
+    shell.openExternal('windowsdefender://exclusions').catch(() => {});
+    return { ok: true };
+  });
+  ipcMain.handle('onboard:finish', () => {
+    store.patch({ firstRunDone: true });
+    if (onboardWin && !onboardWin.isDestroyed()) onboardWin.close();
+    return { ok: true };
+  });
+  ipcMain.handle('window:open-settings', () => {
+    openSettingsWindow();
+    return { ok: true };
+  });
 }
 
 function applySettings(partial) {
@@ -440,8 +547,40 @@ function applySettings(partial) {
   if (before.multiMonitor !== after.multiMonitor) {
     overlays.createAll(after.multiMonitor);
   }
-  // PTT key changed -> uiohook listener reads live value, so no re-register needed.
+  // Autostart changed -> register/unregister the login item.
+  if (before.autostart !== after.autostart) applyAutostart(after.autostart);
+  // STOP key changed while it was live -> it is re-registered per agent run, so
+  // nothing to do here; the next run reads the new accelerator.
   return after;
+}
+
+function applyAutostart(on) {
+  try {
+    if (process.platform === 'win32') app.setLoginItemSettings({ openAtLogin: Boolean(on), path: process.execPath });
+    else app.setLoginItemSettings({ openAtLogin: Boolean(on) });
+  } catch (e) {
+    log.warn('startup', 'autostart toggle failed', { error: e.message });
+  }
+}
+
+// Silent background updates for packaged builds (electron-updater + GitHub
+// Releases). Never required in dev; a missing/misconfigured updater must not
+// stop the app from starting, so everything is wrapped and best-effort.
+function initAutoUpdate() {
+  if (!app.isPackaged) return;
+  try {
+    const { autoUpdater } = require('electron-updater');
+    autoUpdater.logger = { info: (m) => log.info('update', String(m)), warn: (m) => log.warn('update', String(m)), error: (m) => log.error('update', String(m)) };
+    autoUpdater.autoDownload = true;
+    autoUpdater.on('update-downloaded', () => {
+      try {
+        tray.displayBalloon({ title: 'HeyClicky updated', content: 'Restart to finish updating.' });
+      } catch (e) {}
+    });
+    autoUpdater.checkForUpdatesAndNotify().catch((e) => log.warn('update', 'check failed', { error: e.message }));
+  } catch (e) {
+    log.warn('update', 'electron-updater unavailable', { error: e.message });
+  }
 }
 
 // --- App lifecycle ----------------------------------------------------------
@@ -462,28 +601,71 @@ app.whenReady().then(() => {
   store.init(userData);
   memory.init(userData);
   integrations.init(userData);
+  try {
+    log.init(app.getPath('logs'));
+  } catch (e) {
+    log.init(userData);
+  }
+  log.info('startup', 'HeyClicky starting', { provider: config.provider, vision: config.visionProvider(), overlays: store.read().multiMonitor });
 
   registerIpc();
   overlays.createAll(store.read().multiMonitor);
+
+  // Let the agent draw on / guide with the screen overlays.
+  tools.bindScreen({
+    draw: (p) => overlays.sendToDisplay('clicky:draw', p, cursorDisplayId()),
+    guide: (p) => overlays.sendToDisplay('clicky:guide', p, cursorDisplayId()),
+    clear: () => {
+      const did = cursorDisplayId();
+      overlays.sendToDisplay('clicky:draw', { op: 'clear' }, did);
+      overlays.sendToDisplay('clicky:guide', { clear: true }, did);
+    }
+  });
+
   createTray();
   startHotkeys();
   registerShortcuts();
+  initAutoUpdate();
 
-  // First run: open settings so the user can drop in their keys.
+  // Input-driver health probe: prove UIA + PowerShell input works before the user
+  // relies on it, and surface a clear message if antivirus blocked it. findName is
+  // read-only (no click, no cursor move), so this is safe to run on every start.
+  control
+    .findName('__clicky_probe__')
+    .then((r) => {
+      if (r && r.error) {
+        log.error('startup', 'input driver unavailable', { error: r.error });
+        try {
+          tray.displayBalloon({
+            title: 'HeyClicky: control blocked',
+            content: 'Desktop control is not working: ' + String(r.error).slice(0, 140) + ' (antivirus may be blocking PowerShell).'
+          });
+        } catch (e) {}
+      } else {
+        log.info('startup', 'input driver OK');
+      }
+    })
+    .catch((e) => log.error('startup', 'input probe threw', { error: e.message }));
+
+  // Apply the autostart preference every launch (idempotent).
+  applyAutostart(store.read().autostart);
+
+  // First run: show the welcome/onboarding wizard (keys, mic, hold-to-talk, one
+  // real demo action). It marks firstRunDone when the user finishes.
   if (!store.read().firstRunDone) {
-    store.patch({ firstRunDone: true });
-    openSettingsWindow();
+    openOnboardWindow();
   }
 
   screen.on('display-metrics-changed', () => overlays.createAll(store.read().multiMonitor));
   screen.on('display-added', () => overlays.createAll(store.read().multiMonitor));
   screen.on('display-removed', () => overlays.createAll(store.read().multiMonitor));
 
-  console.log(`[clicky] ready - ${overlays.count()} overlay(s), provider=${config.provider}`);
+  log.info('startup', 'ready', { overlayCount: overlays.count(), provider: config.provider });
 });
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  try { control.shutdown(); } catch (e) {}
   overlays.destroy();
 });
 

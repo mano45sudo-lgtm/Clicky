@@ -17,6 +17,14 @@ const agentGoal = agentEl.querySelector('.goal');
 const agentList = agentEl.querySelector('ul');
 const body = document.body;
 
+// Full-screen layers: #draw = persistent pictures, #fx = animated cursor guide.
+const drawCanvas = document.getElementById('draw');
+const dctx = drawCanvas.getContext('2d');
+const fxCanvas = document.getElementById('fx');
+const fctx = fxCanvas.getContext('2d');
+let drawItems = [];
+let guide = null; // { x, y, label, since }
+
 const target = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 const pos = { x: target.x, y: target.y };
 const velocity = { x: 0, y: 0 };
@@ -79,23 +87,45 @@ if (window.clicky) {
     agentEl.classList.add('visible');
     if (p.type === 'start' || p.type === 'status') {
       if (p.goal) agentGoal.textContent = p.goal;
-      if (p.type === 'start') agentList.innerHTML = '';
+      if (p.type === 'start') { agentList.innerHTML = ''; agentEl.classList.remove('confirming'); }
+      if (p.state === 'recovering') agentGoal.textContent = p.goal + '  \u00b7  recovering\u2026';
+    } else if (p.type === 'confirm') {
+      if (p.decision) {
+        agentEl.classList.remove('confirming');
+        if (agentGoal.dataset.confirming) { delete agentGoal.dataset.confirming; }
+        return;
+      }
+      // A destructive step is waiting on the user. Overlay is click-through, so
+      // the actionable Allow/Block buttons live in the command window; here we
+      // shout the warning and show the always-available STOP key hint.
+      agentEl.classList.add('confirming');
+      agentGoal.dataset.confirming = '1';
+      agentGoal.textContent = '\u26a0 Need your OK: ' + (p.label || p.tool) + ' \u2014 ' + (p.reason || '') + '. Press Escape to STOP.';
     } else if (p.type === 'step') {
       if (p.state === 'running') {
         const li = document.createElement('li');
-        li.dataset.tool = p.tool;
+        li.dataset.idx = p.index;
         li.className = 'running';
-        li.textContent = p.tool + (p.reason ? ' - ' + p.reason : '');
+        li.textContent = (p.label || p.tool) + (p.reason ? '  \u00b7  ' + p.reason : '');
         agentList.appendChild(li);
-      } else if (p.state === 'done') {
-        const li = [...agentList.children].find((x) => x.dataset.tool === p.tool && x.className === 'running');
+      } else if (p.state === 'preview') {
+        const li = document.createElement('li');
+        li.dataset.idx = p.index;
+        li.className = 'preview';
+        li.textContent = '\u25e1 ' + (p.label || p.tool) + ' (planned)';
+        agentList.appendChild(li);
+      } else {
+        const li = [...agentList.children].find((x) => x.dataset.idx === String(p.index));
         if (li) {
-          li.className = 'done';
-          li.textContent = p.tool + ' \u2713';
+          const bad = p.state === 'error';
+          li.className = bad ? 'error' : 'done';
+          li.textContent = (p.label || p.tool) + (bad ? '  \u2717  ' : '  \u2713  ') + (p.detail || '');
         }
       }
     } else if (p.type === 'done') {
-      agentGoal.textContent = (p.summary || 'Done');
+      agentEl.classList.remove('confirming');
+      agentGoal.textContent = p.summary || 'Done';
+      agentGoal.classList.toggle('err', Boolean(p.failures));
       setTimeout(() => agentEl.classList.remove('visible'), 7000);
     }
   });
@@ -112,6 +142,24 @@ if (window.clicky) {
     if (p && p.on) startConversation(p);
     else stopConversation(false);
   });
+
+  // Agent drawing + cursor guidance onto the full-screen layers.
+  if (window.clicky.onDraw) {
+    window.clicky.onDraw((p) => {
+      if (!p) return;
+      if (p.op === 'clear') { drawItems = []; renderDraw(); return; }
+      const list = p.items || p.shapes || [];
+      if (p.clearFirst) drawItems = [];
+      drawItems = drawItems.concat(list);
+      renderDraw();
+    });
+  }
+  if (window.clicky.onGuide) {
+    window.clicky.onGuide((p) => {
+      if (!p || p.clear) { guide = null; return; }
+      guide = { x: p.x, y: p.y, label: p.label || '', since: performance.now() };
+    });
+  }
 }
 
 // --- Microphone -> WAV (16-bit PCM mono 16 kHz) ----------------------------
@@ -308,43 +356,188 @@ function bufferToBase64(buf) {
   return btoa(bin);
 }
 
+// --- On-screen drawing + cursor guide --------------------------------------
+function sizeLayer(canvas) {
+  const w = window.innerWidth, h = window.innerHeight;
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+}
+function mapX(v, W) { return v <= 1 ? v * W : v; }
+function mapY(v, H) { return v <= 1 ? v * H : v; }
+function mapS(v, S) { return v <= 1 ? v * S : v; }
+
+function renderDraw() {
+  sizeLayer(drawCanvas);
+  const W = drawCanvas.width, H = drawCanvas.height, S = Math.min(W, H);
+  dctx.clearRect(0, 0, W, H);
+  for (const it of drawItems) renderItem(dctx, it, W, H, S);
+}
+
+function renderItem(g, it, W, H, S) {
+  if (!it) return;
+  const shape = String(it.shape || it.kind || '').toLowerCase();
+  const color = it.color || '#38bdf8';
+  const lw = it.width ? mapS(it.width, S) : Math.max(3, S * 0.006);
+  g.save();
+  g.strokeStyle = color; g.fillStyle = color;
+  g.lineWidth = lw; g.lineJoin = 'round'; g.lineCap = 'round';
+  const cx = mapX(it.x != null ? it.x : 0.5, W);
+  const cy = mapY(it.y != null ? it.y : 0.5, H);
+  const size = mapS(it.size != null ? it.size : 0.16, S);
+  const x2 = it.x2 != null ? mapX(it.x2, W) : cx + size;
+  const y2 = it.y2 != null ? mapY(it.y2, H) : cy;
+
+  switch (shape) {
+    case 'circle': g.beginPath(); g.arc(cx, cy, size / 2, 0, Math.PI * 2); it.fill ? g.fill() : g.stroke(); break;
+    case 'square': case 'rect': g.beginPath(); g.rect(cx - size / 2, cy - size / 2, size, size); it.fill ? g.fill() : g.stroke(); break;
+    case 'triangle': g.beginPath(); g.moveTo(cx, cy - size / 2); g.lineTo(cx + size / 2, cy + size / 2); g.lineTo(cx - size / 2, cy + size / 2); g.closePath(); it.fill ? g.fill() : g.stroke(); break;
+    case 'line': g.beginPath(); g.moveTo(mapX(it.x, W), mapY(it.y, H)); g.lineTo(x2, y2); g.stroke(); break;
+    case 'arrow': arrow(g, mapX(it.x != null ? it.x : 0.2, W), mapY(it.y != null ? it.y : 0.5, H), x2, y2, lw); break;
+    case 'text': g.font = `600 ${size * 0.6}px system-ui, "Segoe UI", sans-serif`; g.textBaseline = 'middle'; g.fillText(it.text || '', cx, cy); break;
+    case 'smiley': smiley(g, cx, cy, size, color); break;
+    case 'heart': heart(g, cx, cy, size, color); break;
+    case 'star': star(g, cx, cy, size / 2, color); break;
+    case 'house': house(g, cx, cy, size, color); break;
+    case 'check': g.beginPath(); g.moveTo(cx - size / 2, cy); g.lineTo(cx - size / 8, cy + size / 3); g.lineTo(cx + size / 2, cy - size / 3); g.stroke(); break;
+    case 'path': if (it.points) { g.beginPath(); it.points.forEach((p, i) => (i ? g.lineTo(mapX(p[0], W), mapY(p[1], H)) : g.moveTo(mapX(p[0], W), mapY(p[1], H)))); if (it.closed) g.closePath(); it.fill ? g.fill() : g.stroke(); } break;
+    default: g.beginPath(); g.arc(cx, cy, size / 2, 0, Math.PI * 2); g.stroke();
+  }
+  g.restore();
+}
+
+function arrow(g, x1, y1, x2, y2, lw) {
+  g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
+  const a = Math.atan2(y2 - y1, x2 - x1), len = Math.max(12, lw * 5);
+  g.beginPath(); g.moveTo(x2, y2);
+  g.lineTo(x2 - len * Math.cos(a - Math.PI / 6), y2 - len * Math.sin(a - Math.PI / 6));
+  g.moveTo(x2, y2);
+  g.lineTo(x2 - len * Math.cos(a + Math.PI / 6), y2 - len * Math.sin(a + Math.PI / 6));
+  g.stroke();
+}
+
+function smiley(g, cx, cy, size, color) {
+  const r = size / 2;
+  g.strokeStyle = color; g.lineWidth = Math.max(3, size * 0.05);
+  g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
+  g.fillStyle = color;
+  const ex = r * 0.35, ey = -r * 0.25, er = Math.max(2, size * 0.045);
+  g.beginPath(); g.arc(cx - ex, cy + ey, er, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(cx + ex, cy + ey, er, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(cx, cy + r * 0.05, r * 0.55, 0.15 * Math.PI, 0.85 * Math.PI); g.stroke();
+}
+
+function heart(g, cx, cy, size, color) {
+  const s = size / 16; g.fillStyle = color; g.beginPath();
+  g.moveTo(cx, cy + s * 5);
+  g.bezierCurveTo(cx, cy + s * 2, cx - s * 8, cy - s * 6, cx - s * 8, cy + s * 1);
+  g.bezierCurveTo(cx - s * 8, cy + s * 5, cx, cy + s * 8, cx, cy + s * 10);
+  g.bezierCurveTo(cx, cy + s * 8, cx + s * 8, cy + s * 5, cx + s * 8, cy + s * 1);
+  g.bezierCurveTo(cx + s * 8, cy - s * 6, cx, cy + s * 2, cx, cy + s * 5);
+  g.fill();
+}
+
+function star(g, cx, cy, r, color) {
+  g.fillStyle = color; g.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const rad = i % 2 ? r * 0.45 : r;
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    const x = cx + rad * Math.cos(a), y = cy + rad * Math.sin(a);
+    if (i) g.lineTo(x, y); else g.moveTo(x, y);
+  }
+  g.closePath(); g.fill();
+}
+
+function house(g, cx, cy, size, color) {
+  const w = size, h = size * 0.7, top = cy - h / 2;
+  g.strokeStyle = color; g.lineWidth = Math.max(3, size * 0.04);
+  g.beginPath(); g.rect(cx - w / 2, top + h * 0.4, w, h * 0.6); g.stroke();
+  g.beginPath(); g.moveTo(cx - w / 2, top + h * 0.4); g.lineTo(cx, top); g.lineTo(cx + w / 2, top + h * 0.4); g.closePath(); g.stroke();
+}
+
+// A Figma-style multiplayer cursor bubble: a small pointer + a rounded label
+// with a muted name line and a bold message line (adapted from the Cursor
+// component into our canvas overlay - this app is Electron/vanilla JS, not React).
+function drawBubble(g, x, y, name, message, accent) {
+  const S = Math.min(fxCanvas.width, fxCanvas.height);
+  const fs = Math.max(13, S * 0.017);
+  const padX = fs * 0.85, padY = fs * 0.6, lineH = fs * 1.3;
+  g.textBaseline = 'top';
+  g.font = `700 ${fs}px system-ui, "Segoe UI", sans-serif`;
+  const wMsg = g.measureText(message || '').width;
+  g.font = `600 ${fs * 0.9}px system-ui, "Segoe UI", sans-serif`;
+  const wName = g.measureText(name || '').width;
+  const bw = Math.max(wMsg, wName) + padX * 2;
+  const lines = (name ? 1 : 0) + (message ? 1 : 0);
+  const bh = padY * 2 + lineH * Math.max(1, lines);
+  const bx = x + 16, by = y + 18;
+  g.fillStyle = accent;
+  g.beginPath();
+  g.moveTo(x, y); g.lineTo(x + 13, y + 13); g.lineTo(x + 4, y + 15); g.closePath(); g.fill();
+  g.beginPath();
+  if (g.roundRect) g.roundRect(bx, by, bw, bh, 10); else g.rect(bx, by, bw, bh);
+  g.fillStyle = 'rgba(17,24,39,0.94)'; g.fill();
+  g.lineWidth = 2; g.strokeStyle = accent; g.stroke();
+  let ty = by + padY;
+  if (name) { g.fillStyle = 'rgba(226,232,240,0.6)'; g.font = `600 ${fs * 0.9}px system-ui, "Segoe UI", sans-serif`; g.fillText(name, bx + padX, ty); ty += lineH; }
+  if (message) { g.fillStyle = '#e5f6fb'; g.font = `700 ${fs}px system-ui, "Segoe UI", sans-serif`; g.fillText(message, bx + padX, ty); }
+}
+
+// Animated guide: a pulsing target + an arrow leading from the buddy (cursor) to it.
+function drawFx() {
+  sizeLayer(fxCanvas);
+  const W = fxCanvas.width, H = fxCanvas.height, S = Math.min(W, H);
+  fctx.clearRect(0, 0, W, H);
+  if (!guide) return;
+  if (performance.now() - guide.since > 12000) { guide = null; return; }
+  const gx = mapX(guide.x != null ? guide.x : 0.5, W);
+  const gy = mapY(guide.y != null ? guide.y : 0.5, H);
+  const t = (performance.now() - guide.since) / 1000;
+  const pulse = (Math.sin(t * 3) + 1) / 2;
+  const color = '#22d3ee';
+  fctx.strokeStyle = color; fctx.fillStyle = color; fctx.lineWidth = Math.max(3, S * 0.005);
+  fctx.lineJoin = 'round'; fctx.lineCap = 'round';
+  arrow(fctx, pos.x, pos.y, gx, gy, fctx.lineWidth);
+  fctx.globalAlpha = 0.9;
+  fctx.beginPath(); fctx.arc(gx, gy, 22 + pulse * 26, 0, Math.PI * 2); fctx.stroke();
+  fctx.beginPath(); fctx.arc(gx, gy, 5, 0, Math.PI * 2); fctx.fill();
+  fctx.globalAlpha = 1;
+  if (guide.label) {
+    drawBubble(fctx, gx, gy, 'Clicky', guide.label, color);
+  }
+}
+
 // --- Character drawing ------------------------------------------------------
+// The buddy is the multiplayer-cursor arrow (adapted from the Cursor component's
+// CursorPointer SVG path). This app is Electron/vanilla canvas, not React/
+// Tailwind/shadcn, so we render the same arrow shape + accent-tinted label pill
+// directly instead of importing the .tsx component.
+const POINTER_PATH = new Path2D(
+  'M19.438 6.716 1.115.05A.832.832 0 0 0 .05 1.116L6.712 19.45a.834.834 0 0 0 1.557.025l3.198-8 7.995-3.2a.833.833 0 0 0 0-1.559h-.024Z'
+);
+const STATE_ACCENT = {
+  idle: '#10b981',      // emerald-500 (the component's default pointer color)
+  listening: '#34d399', // emerald-400
+  thinking: '#f59e0b',  // amber-500
+  speaking: '#0ea5e9'   // sky-500
+};
+
 function drawCursor() {
   ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
   ctx.save();
-  ctx.translate(13, 9);
-
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.38)';
-  ctx.shadowBlur = 7;
-  ctx.shadowOffsetX = 3;
-  ctx.shadowOffsetY = 4;
-
-  ctx.fillStyle = state === 'listening' ? '#e6fff6' : '#ffffff';
-  ctx.strokeStyle = '#111827';
-  ctx.lineWidth = 5;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(4, 3);
-  ctx.lineTo(4, 57);
-  ctx.lineTo(19, 43);
-  ctx.lineTo(29, 65);
-  ctx.lineTo(40, 60);
-  ctx.lineTo(30, 39);
-  ctx.lineTo(50, 39);
-  ctx.closePath();
-  ctx.stroke();
-  ctx.fill();
-
+  // Arrow tip (path origin ~0.5,0.5 in its 20x20 box) sits on the cursor hotspot.
+  ctx.translate(17, 12);
+  ctx.scale(2.5, 2.5);
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+  ctx.shadowBlur = 2.5;
+  ctx.shadowOffsetX = 0.6;
+  ctx.shadowOffsetY = 1.2;
+  ctx.fillStyle = STATE_ACCENT[state] || STATE_ACCENT.idle;
+  ctx.fill(POINTER_PATH);
+  // White outline so the arrow reads on any app background.
   ctx.shadowColor = 'transparent';
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(10, 14);
-  ctx.lineTo(10, 43);
-  ctx.lineTo(18, 35);
-  ctx.stroke();
-
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = '#ffffff';
+  ctx.stroke(POINTER_PATH);
   ctx.restore();
 }
 
@@ -365,6 +558,7 @@ function tick() {
   pos.y += velocity.y;
 
   drawCursor();
+  drawFx();
   const scale = stateScale();
   canvas.style.transform =
     `translate3d(${pos.x - CURSOR_HOTSPOT.x}px, ${pos.y - CURSOR_HOTSPOT.y}px, 0) scale(${scale})`;
@@ -386,5 +580,8 @@ function positionCaption() {
   if (y < pad) y = pad;
   caption.style.transform = `translate3d(${x}px, ${y}px, 0)`;
 }
+
+window.addEventListener('resize', () => { renderDraw(); });
+renderDraw();
 
 requestAnimationFrame(tick);

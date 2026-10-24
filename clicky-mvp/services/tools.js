@@ -5,6 +5,31 @@ const { spawn } = require('child_process');
 const config = require('../config');
 const { capturePrimaryDisplay } = require('./capture');
 const integrations = require('./integrations');
+const control = require('./control');
+const llm = require('./llm');
+const knowledge = require('./knowledge');
+const cdp = require('./cdp');
+
+// Real input is gated by a setting; coordinates are 0..1 screen fractions mapped
+// to physical pixels of the primary display (SetProcessDPIAware keeps these
+// aligned with the screenshot the vision model saw).
+function inputEnabled() {
+  return Boolean(config.settings.agentAllowInput);
+}
+function fracToPx(x, y) {
+  const { screen } = require('electron');
+  const d = screen.getPrimaryDisplay();
+  const sf = d.scaleFactor || 1;
+  const w = Math.round(d.size.width * sf);
+  const h = Math.round(d.size.height * sf);
+  return { px: Math.round(x * w), py: Math.round(y * h) };
+}
+
+// Screen bridge (draw / guide / clear) injected by main.js once overlays exist.
+let screenApi = null;
+function bindScreen(api) {
+  screenApi = api || null;
+}
 
 // Friendly names -> something Windows can actually launch (exe, URI, or file).
 const APP_ALIASES = {
@@ -51,6 +76,21 @@ function runOpen(cmd, args) {
     const p = spawn(cmd, args, { windowsHide: true });
     p.on('error', (e) => resolve({ error: e.message }));
     p.on('close', () => resolve({ ok: true }));
+  });
+}
+
+// Open a URL in the default browser WITHOUT a shell, so query strings with &
+// (e.g. the Gmail compose link) are not split into separate commands.
+function openUrl(url) {
+  return new Promise((resolve) => {
+    const cmd = process.platform === 'win32' ? 'explorer' : (process.platform === 'darwin' ? 'open' : 'xdg-open');
+    let done = false;
+    const finish = (r) => { if (!done) { done = true; resolve(r); } };
+    let p;
+    try { p = spawn(cmd, [url], { windowsHide: true }); } catch (e) { return finish({ error: e.message }); }
+    p.on('error', (e) => finish({ error: e.message }));
+    p.on('close', () => finish({ ok: true }));
+    setTimeout(() => finish({ ok: true }), 1500);
   });
 }
 
@@ -171,6 +211,214 @@ const tools = {
       });
     }
   },
+  draw: {
+    description:
+      'Draw basic pictures/shapes on the screen. items is a list of shapes. Coordinates are fractions of the screen (0..1): x,y is the shape CENTER and size is a fraction of the screen. Shapes: smiley, heart, star, house, circle, square, triangle, check (use x,y,size,color); line and arrow (use x,y,x2,y2,color); text (use text,x,y,size,color). Example "draw a smiley": {items:[{shape:"smiley",x:0.5,y:0.45,size:0.25,color:"#38bdf8"}]}. Put many shapes in items to compose one picture.',
+    parameters: {
+      type: 'object',
+      properties: {
+        items: { type: 'array', items: { type: 'object' } },
+        clearFirst: { type: 'boolean' }
+      },
+      required: ['items']
+    },
+    run: async ({ items, clearFirst }) => {
+      if (!screenApi || !screenApi.draw) return { error: 'screen overlay not ready' };
+      const list = Array.isArray(items) ? items : [];
+      if (!list.length) return { error: 'no shapes to draw' };
+      screenApi.draw({ op: 'shapes', items: list, clearFirst: clearFirst !== false });
+      return { ok: true, drew: list.length };
+    }
+  },
+  guide: {
+    description:
+      'Guide the user visually: point an on-screen arrow and pulsing ring to a spot with a short label. x,y are fractions of the screen (0..1). Use for "show me where" and step-by-step guidance.',
+    parameters: {
+      type: 'object',
+      properties: { x: { type: 'number' }, y: { type: 'number' }, label: { type: 'string' } },
+      required: ['x', 'y']
+    },
+    run: async ({ x, y, label }) => {
+      if (!screenApi || !screenApi.guide) return { error: 'screen overlay not ready' };
+      screenApi.guide({ x, y, label: label || '' });
+      return { ok: true };
+    }
+  },
+  clearDrawing: {
+    description: 'Remove all on-screen drawings and the guiding arrow.',
+    parameters: { type: 'object', properties: {}, required: [] },
+    run: async () => {
+      if (!screenApi || !screenApi.clear) return { error: 'screen overlay not ready' };
+      screenApi.clear();
+      return { ok: true };
+    }
+  },
+  clickAt: {
+    description:
+      'Move the REAL mouse cursor to a point and click it. x,y are fractions of the screen (0..1). Set double:true to double-click. Use when you already know where something is.',
+    parameters: {
+      type: 'object',
+      properties: { x: { type: 'number' }, y: { type: 'number' }, double: { type: 'boolean' } },
+      required: ['x', 'y']
+    },
+    run: async ({ x, y, double }) => {
+      if (!inputEnabled()) return { error: 'mouse control is disabled in Settings (turn on "Control the mouse and keyboard")' };
+      const { px, py } = fracToPx(x, y);
+      return control.run(double ? 'doubleclick' : 'click', { x: px, y: py });
+    }
+  },
+  clickOnScreen: {
+    description:
+      'LOOK at the screen, FIND a control by plain description, then move the real cursor onto it and click. This is the main way to operate apps that are already open, e.g. target "Blank document template", "Compose button", "To field", "Subject field", "message body", "the Send button". Returns found:true/false.',
+    parameters: {
+      type: 'object',
+      properties: { target: { type: 'string' }, double: { type: 'boolean' } },
+      required: ['target']
+    },
+    run: async ({ target, double }) => {
+      if (!inputEnabled()) return { error: 'mouse control is disabled in Settings (turn on "Control the mouse and keyboard")' };
+      // 1) Fast + local + pixel-exact: Windows UI Automation by control name (no vision, no clipboard).
+      //    Try the app knowledge pack's candidate names so "new file button" still lands on "New".
+      const cands = knowledge.candidateNames(target);
+      if (!double) {
+        for (const name of cands) {
+          const ui = await control.clickName(name);
+          if (ui && ui.found) return { found: true, via: 'uia', x: ui.x, y: ui.y, target };
+          if (ui && ui.error) return { found: false, error: ui.error, target };
+        }
+      } else {
+        for (const name of cands) {
+          const f = await control.findName(name);
+          if (f && f.found) {
+            const r = await control.run('doubleclick', { x: f.x, y: f.y });
+            return { ...r, found: true, via: 'uia', x: f.x, y: f.y, target };
+          }
+        }
+      }
+      // 2) Fallback for web/custom UI that UIA can't see: Gemini locates it on a screenshot.
+      const shot = await capturePrimaryDisplay().catch(() => null);
+      if (!shot) return { error: 'could not capture the screen' };
+      const sys =
+        'You locate ONE UI element in a screenshot. Return JSON {"found":bool,"x":number,"y":number,"label":string}. ' +
+        'x,y are the CENTER of the element as fractions of the image width and height (0..1, top-left origin). ' +
+        'If it is not visible, return {"found":false}.';
+      const data = await llm.json({ system: sys, text: `Find this on screen: "${target}"`, screenshot: shot, fast: true, fallback: { found: false } });
+      if (!data || !data.found || typeof data.x !== 'number' || typeof data.y !== 'number') {
+        return { found: false, error: 'I could not find: ' + target };
+      }
+      const x = Math.max(0, Math.min(1, data.x));
+      const y = Math.max(0, Math.min(1, data.y));
+      const { px, py } = fracToPx(x, y);
+      const r = await control.run(double ? 'doubleclick' : 'click', { x: px, y: py });
+      return { ...r, found: true, via: 'vision', x, y, target };
+    }
+  },
+  typeText: {
+    description:
+      'Type TEXT into whatever field or document currently has focus (call right after clicking the target). Use for writing an essay into Word or filling an email To/Subject/body. Types real keystrokes via SendKeys (no clipboard), so it handles long and multi-line text.',
+    parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+    run: async ({ text }) => {
+      if (!inputEnabled()) return { error: 'keyboard control is disabled in Settings (turn on "Control the mouse and keyboard")' };
+      const body = String(text == null ? '' : text);
+      const r = await control.type(body);
+      return r && r.error ? r : { typed: true, chars: body.length };
+    }
+  },
+  pressKey: {
+    description: 'Press a key or SendKeys sequence, e.g. "{Enter}", "{Escape}", "^a" (select all), "^s" (save), "%{F4}" (close window).',
+    parameters: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
+    run: async ({ key }) => {
+      if (!inputEnabled()) return { error: 'keyboard control is disabled in Settings (turn on "Control the mouse and keyboard")' };
+      return control.key(String(key || ''));
+    }
+  },
+  typeInto: {
+    description:
+      'Type text directly INTO a named field/document by label (e.g. target "Subject", "To", "Body", "Type text here") using UI Automation focus - one step, no separate click. Falls back to clicking the target then typing. Use this to fill a specific input quickly.',
+    parameters: {
+      type: 'object',
+      properties: { target: { type: 'string' }, text: { type: 'string' } },
+      required: ['target', 'text']
+    },
+    run: async ({ target, text }) => {
+      if (!inputEnabled()) return { error: 'keyboard control is disabled in Settings (turn on "Control the mouse and keyboard")' };
+      const t = String(target || '').trim();
+      const body = String(text == null ? '' : text);
+      for (const name of knowledge.candidateNames(t)) {
+        const r = await control.typeName(name, body);
+        if (r && r.found) return { typed: true, via: 'uia', chars: body.length, target: t };
+        if (r && r.error) return { typed: false, error: r.error, target: t };
+        const c = await control.clickName(name);
+        if (c && c.found) {
+          await new Promise((res) => setTimeout(res, 250));
+          await control.type(body);
+          return { typed: true, via: 'click+type', chars: body.length, target: t };
+        }
+      }
+      return { typed: false, error: 'field not found: ' + t, target: t };
+    },
+  },
+  composeEmail: {
+    description:
+      'Draft an email with ZERO manual steps: opens a pre-filled Gmail compose window (To, Subject, Body) in the browser. Use for ANY "write/draft/compose an email" request instead of trying to click fields. It only prepares the draft; it never sends.',
+    parameters: {
+      type: 'object',
+      properties: { to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } },
+      required: ['to']
+    },
+    run: async ({ to, subject, body }) => {
+      if (!config.settings.agentAllowAppLaunch) return { error: 'app launch is disabled in Settings' };
+      const url =
+        'https://mail.google.com/mail/?view=cm&fs=1' +
+        '&to=' + encodeURIComponent(to || '') +
+        '&su=' + encodeURIComponent(subject || '') +
+        '&body=' + encodeURIComponent(body || '');
+      const out = await openUrl(url);
+      return { ...out, drafted: true, to, subject };
+    }
+  },
+  wait: {
+    description: 'Pause for a moment (milliseconds, 200-8000). Use right after openApp to let a window appear before you clickOnScreen/typeText. This is what makes full automation reliable.',
+    parameters: { type: 'object', properties: { ms: { type: 'number' } }, required: ['ms'] },
+    run: async ({ ms }) => {
+      const n = Math.max(0, Math.min(8000, Number(ms) || 0));
+      await new Promise((r) => setTimeout(r, n));
+      return { ok: true, waitedMs: n };
+    }
+  },
+  browserNavigate: {
+    description:
+      'Open a URL in a CDP-controlled browser (Chrome/Edge) for RELIABLE web automation. Launches the debug browser if needed. Use this instead of openApp when you will fill a web form, so browserClick/browserType can drive the page directly.',
+    parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
+    run: async ({ url }) => {
+      const target = /^https?:\/\//i.test(url) ? url : 'https://' + String(url || '');
+      const e = await cdp.ensure();
+      if (e.error) return e;
+      const r = await cdp.openUrl(target);
+      return { ...r, url: target, via: 'cdp' };
+    }
+  },
+  browserClick: {
+    description:
+      'Click a button/link on the current browser page by its visible text, label, or aria name (e.g. "Log in", "Submit", "Continue"). Uses Chrome DevTools Protocol so it works inside web apps where UIA is blind. Returns found:true/false.',
+    parameters: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'] },
+    run: async ({ target }) => {
+      const r = await cdp.clickText(target);
+      if (r && r.error) return r;
+      return r && r.found ? { found: true, via: 'cdp', target } : { found: false, error: 'I could not find on the page: ' + target, target };
+    }
+  },
+  browserType: {
+    description:
+      'Type text INTO a named web input/textarea by its label, placeholder, aria-label or name (e.g. target "Email", "Password", "Search"). Sets the value and fires input/change events so frameworks (React/Gmail) register it. One step, no separate click. Returns typed:true/false.',
+    parameters: { type: 'object', properties: { target: { type: 'string' }, text: { type: 'string' } }, required: ['target', 'text'] },
+    run: async ({ target, text }) => {
+      const body = String(text == null ? '' : text);
+      const r = await cdp.fillField(target, body);
+      if (r && r.error) return r;
+      return r && r.found ? { typed: true, via: 'cdp', chars: body.length, target } : { typed: false, error: 'field not found on page: ' + target, target };
+    }
+  },
   createNote: {
     description: 'Save a note (title + body) to the Clicky notebook.',
     parameters: {
@@ -201,4 +449,4 @@ async function exec(name, args = {}) {
   }
 }
 
-module.exports = { definitions, exec, tools };
+module.exports = { definitions, exec, tools, bindScreen };

@@ -50,8 +50,14 @@
         <option value="groq">Groq (fast llama)</option>
         <option value="gemini">Gemini</option>
         <option value="anthropic">Claude (Anthropic)</option>
-        <option value="sarvam">Sarvam (105B)</option>
       </select>
+      <label>Vision provider (who looks at the screen)</label>
+      <select id="visionProvider">
+        <option value="">Auto (pick a vision-capable key)</option>
+        <option value="gemini">Gemini</option>
+        <option value="anthropic">Claude (Anthropic)</option>
+      </select>
+      <div class="hint">Text answers use the Provider above; screenshots always go to a vision-capable provider.</div>
       <label>Groq API key</label>
       <input id="groqApiKey" type="password" placeholder="gsk_..." autocomplete="off" />
       <label>Gemini API key</label>
@@ -78,34 +84,23 @@
         <div>
           <label>Speech-to-text</label>
           <select id="sttProvider">
+            <option value="whisper">Whisper (local, open source)</option>
             <option value="os">OS native (Windows SAPI)</option>
             <option value="assemblyai">AssemblyAI</option>
-            <option value="sarvam">Sarvam (Saaras)</option>
             <option value="mock">Mock</option>
           </select>
         </div>
         <div>
           <label>Text-to-speech</label>
           <select id="ttsProvider">
+            <option value="fishaudio">Fish Audio (open source)</option>
             <option value="os">OS native voice</option>
-            <option value="elevenlabs">ElevenLabs</option>
-            <option value="sarvam">Sarvam (Bulbul)</option>
             <option value="mock">Mock (silent)</option>
           </select>
         </div>
       </div>
       <label>AssemblyAI API key</label>
       <input id="assemblyaiApiKey" type="password" autocomplete="off" />
-      <div class="row">
-        <div>
-          <label>ElevenLabs API key</label>
-          <input id="elevenlabsApiKey" type="password" autocomplete="off" />
-        </div>
-        <div>
-          <label>ElevenLabs voice id</label>
-          <input id="elevenlabsVoiceId" placeholder="21m00Tcm4TlvDq8ikWAM" />
-        </div>
-      </div>
       <div class="row">
         <div>
           <label>OS voice name (optional)</label>
@@ -116,15 +111,47 @@
           <input id="language" />
         </div>
       </div>
+
       <div class="row">
         <div>
-          <label>Sarvam API key (Saaras STT + Bulbul TTS)</label>
-          <input id="sarvamApiKey" type="password" placeholder="sk_..." autocomplete="off" />
+          <label>Whisper binary (whisper-cli)</label>
+          <input id="whisperCliPath" placeholder="auto-detect if blank" />
+          <div class="hint">Local open-source STT. Point at whisper-cli.exe (or leave blank to search PATH). Falls back to OS voice if missing.</div>
         </div>
         <div>
-          <label>Sarvam voice (speaker)</label>
-          <input id="sarvamSpeaker" placeholder="shubh" />
-          <div class="hint">bulbul:v3 names: shubh, aditya, ritu, priya, neha...</div>
+          <label>Whisper model (ggml-*.bin)</label>
+          <input id="whisperModelPath" placeholder="auto-detect if blank" />
+          <div class="hint">e.g. ggml-base.en.bin. Download from whisper.cpp models.</div>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Whisper language</label>
+          <input id="whisperLanguage" placeholder="en" />
+          <div class="hint">ISO code, or "auto" to detect.</div>
+        </div>
+        <div></div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>Fish Audio base URL (self-host)</label>
+          <input id="fishAudioBaseUrl" placeholder="http://localhost:8080" />
+          <div class="hint">Open-source Fish Speech server. Leave blank to use hosted fish.audio.</div>
+        </div>
+        <div>
+          <label>Fish Audio API key (hosted)</label>
+          <input id="fishAudioApiKey" type="password" autocomplete="off" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Fish Audio model / voice id</label>
+          <input id="fishAudioModelId" placeholder="hosted model id" />
+        </div>
+        <div>
+          <label>Fish Audio reference id (optional)</label>
+          <input id="fishAudioReferenceId" />
         </div>
       </div>
 
@@ -161,6 +188,22 @@
       <div class="check"><input id="agentAllowFileWrites" type="checkbox" /><span>Allow file writes</span></div>
       <div class="check"><input id="agentAllowAppLaunch" type="checkbox" /><span>Allow opening apps / URLs</span></div>
       <div class="check"><input id="agentAllowRunCommand" type="checkbox" /><span>Allow running commands (full desktop control)</span></div>
+      <div class="check"><input id="agentAllowInput" type="checkbox" /><span>Control the mouse and keyboard (click on screen + type)</span></div>
+      <div class="sub" style="margin-top:14px">Guardrails</div>
+      <div class="check"><input id="agentConfirmDestructive" type="checkbox" /><span>Ask me before anything hard to undo (Send, Delete, Pay, destructive commands)</span></div>
+      <div class="check"><input id="agentPreviewMode" type="checkbox" /><span>Preview mode - narrate the plan, never execute it</span></div>
+      <div class="row">
+        <div>
+          <label>Stop key</label>
+          <input id="stopShortcut" placeholder="Escape" />
+          <div class="hint">Global key that instantly stops the agent while it runs.</div>
+        </div>
+        <div>
+          <label>Allowlist (comma phrases)</label>
+          <input id="agentAllowlist" placeholder="test inbox, sandbox" />
+          <div class="hint">Matching actions skip the confirm.</div>
+        </div>
+      </div>
       <label>Web search provider</label>
       <select id="webSearchProvider">
         <option value="none">None</option>
@@ -180,6 +223,8 @@
 
       <h2>Interface &amp; privacy</h2>
       <div class="check"><input id="multiMonitor" type="checkbox" /><span>Show Clicky on all displays</span></div>
+      <div class="check"><input id="ttsConfirmations" type="checkbox" /><span>Speak task outcomes and safety confirmations</span></div>
+      <div class="check"><input id="autostart" type="checkbox" /><span>Start HeyClicky when I sign in to Windows</span></div>
       <div class="check"><input id="allowAnalytics" type="checkbox" /><span>Send anonymous usage analytics</span></div>
       <div class="row">
         <div>
@@ -191,6 +236,14 @@
           <input id="sttTimeoutMs" type="number" />
         </div>
       </div>
+
+      <h2>Antivirus &amp; troubleshooting</h2>
+      <p class="sub">HeyClicky moves your real mouse and types using Windows automation (PowerShell). Some antivirus tools block that. Run a check, and if it is blocked, add an exclusion.</p>
+      <div class="row">
+        <div><button id="diagnoseBtn">Run desktop-control check</button></div>
+        <div><button id="exclusionsBtn">Open Defender exclusions</button></div>
+      </div>
+      <div id="diagnoseMsg" class="hint" style="margin-top:8px"></div>
     </div>
 
     <div class="actions">

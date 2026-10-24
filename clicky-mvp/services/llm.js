@@ -1,15 +1,15 @@
-// Unified LLM brain. Providers: groq | gemini | anthropic | sarvam | mock. Single-user-turn
+// Unified LLM brain. Providers: groq | gemini | anthropic | mock. Single-user-turn
 // calls (text + strict JSON) are all the assistant, walkthroughs, and agent
 // need. Vision is passed as an inline image part when a screenshot exists.
 const Anthropic = require('@anthropic-ai/sdk');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const config = require('../config');
 
 const ASSISTANT_SYSTEM = [
-  "You are Clicky, a friendly AI buddy living next to the user's cursor on their desktop.",
-  'You can see a screenshot of their screen. Answer about what is on screen when relevant.',
-  'Keep replies short and spoken-friendly: at most about 3 sentences, plain text, no markdown, no bullet lists.',
-  'Be warm, concise, and practical. If the screen is unclear, say so briefly and ask one question.'
+  "You are Clicky, a hands-on AI buddy living next to the user's cursor. You help, teach, and get things done.",
+  'CAPABILITY: you CAN work live inside whatever app is open on screen - you type into Excel cells, Word documents, forms and any focused window, and you click real controls. NEVER say you cannot touch or type into an open app, and never offer "copy-paste-ready" text as a substitute for doing it. If the user seems to want an action done, tell them the single key rule: just say it as a command ("fill this table with sample sales data") and you will do it on the spot.',
+  'For doubts or "how do I / how to implement" questions, be a patient tutor: give a short, clear, actionable answer with a few concrete steps.',
+  'Keep replies brief and spoken-friendly: about 2 to 4 sentences, plain text, no markdown, no bullet lists.',
+  'Be warm, concise, and practical. If something is unclear, ask one short question.'
 ].join(' ');
 
 function currentImage(screenshot) {
@@ -19,20 +19,61 @@ function currentImage(screenshot) {
   return null;
 }
 
-async function geminiText({ system, text, image, json }) {
-  const genAI = new GoogleGenerativeAI(config.geminiApiKey);
-  const model = genAI.getGenerativeModel({
-    model: config.geminiModel,
-    systemInstruction: system,
-    generationConfig: json ? { responseMimeType: 'application/json' } : undefined
-  });
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Gemini via the REST generateContent endpoint (no SDK) so we can ride out the
+// frequent 503 "high demand" spikes: try the configured model, then fall back
+// across a chain of vision models, each with a short retry. This is what keeps
+// screen-aware answers, walkthroughs and real pointing from dying on a blip.
+async function geminiText({ system, text, image, json, fast }) {
+  const key = config.geminiApiKey;
+  const models = [];
+  const push = (m) => { if (m && !models.includes(m)) models.push(m); };
+  if (fast) {
+    // Locate-only calls (finding a control) want the quickest model first.
+    ['gemini-3.1-flash-lite', 'gemini-flash-lite-latest', 'gemini-2.5-flash', 'gemini-3.5-flash'].forEach(push);
+  } else {
+    push(config.geminiModel);
+    ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest', 'gemini-flash-latest'].forEach(push);
+  }
 
   const parts = [];
   if (image) parts.push({ inlineData: { mimeType: image.mediaType, data: image.base64 } });
   parts.push({ text });
+  const body = { contents: [{ role: 'user', parts }] };
+  if (system) body.systemInstruction = { parts: [{ text: system }] };
+  if (json) body.generationConfig = { responseMimeType: 'application/json' };
 
-  const res = await model.generateContent({ contents: [{ role: 'user', parts }] });
-  return (res.response.text() || '').trim();
+  let lastErr = new Error('Gemini vision unavailable');
+  for (const m of models) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify(body)
+        });
+        if (res.status === 503 || res.status === 429 || res.status >= 500) {
+          lastErr = new Error(`Gemini ${m} HTTP ${res.status}`);
+          await sleep(attempt === 0 ? 900 : 1600);
+          continue; // retry same model, then next model
+        }
+        if (!res.ok) { lastErr = new Error('Gemini HTTP ' + res.status + ' ' + (await res.text()).slice(0, 160)); break; }
+        const data = await res.json();
+        const cand = (data.candidates || [])[0];
+        const p = cand && cand.content && cand.content.parts;
+        const out = p ? p.map((x) => x.text || '').join('').trim() : '';
+        if (out) return out;
+        lastErr = new Error(`Gemini ${m} returned empty`);
+      } catch (e) {
+        lastErr = e;
+        await sleep(700);
+      }
+    }
+  }
+  throw lastErr;
 }
 
 async function anthropicText({ system, text, image, json }) {
@@ -53,41 +94,6 @@ async function anthropicText({ system, text, image, json }) {
   });
 
   return resp.content.filter((b) => b.type === 'text').map((b) => b.text).join(' ').trim();
-}
-
-// Sarvam-105b via its OpenAI-compatible /v1/chat/completions endpoint. This
-// model is TEXT-ONLY (it rejects multimodal array content), so a screenshot
-// cannot be shown to it; we note that in the prompt and answer from text.
-async function sarvamText({ system, text, image, json }) {
-  const key = config.sarvamApiKey;
-  let prompt = text;
-  if (image) {
-    prompt += "\n\n(The user shared a screenshot, but you cannot view images. If the screen matters, briefly ask them to describe what they see.)";
-  }
-  if (json) prompt += "\n\nRespond with ONLY a valid JSON object, no prose.";
-
-  const body = {
-    model: config.sarvamModel,
-    max_tokens: 1024,
-    messages: [
-      { role: 'system', content: system + (json ? ' Respond with ONLY valid JSON.' : '') },
-      { role: 'user', content: prompt }
-    ]
-  };
-  if (json) body.response_format = { type: 'json_object' };
-
-  const res = await fetch('https://api.sarvam.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${key}`,
-      'api-subscription-key': key,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) throw new Error('Sarvam HTTP ' + res.status + ' ' + (await res.text()).slice(0, 200));
-  const data = await res.json();
-  return ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '').trim();
 }
 
 // Groq via its OpenAI-compatible /openai/v1/chat/completions endpoint. Most Groq
@@ -127,11 +133,13 @@ async function groqText({ system, text, image, json }) {
   return ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '').trim();
 }
 
-async function call({ system, text, image, json }) {
-  const provider = config.llmProvider();
-  if (provider === 'gemini') return geminiText({ system, text, image, json });
+async function call({ system, text, image, json, fast }) {
+  // Screenshots go to the vision provider (Gemini/Anthropic if a key exists);
+  // text-only turns stay on the configured brain (Groq). This is what lets Clicky
+  // "see" the screen and point at real controls while keeping a fast text brain.
+  const provider = image ? config.visionProvider() : config.llmProvider();
+  if (provider === 'gemini') return geminiText({ system, text, image, json, fast });
   if (provider === 'anthropic') return anthropicText({ system, text, image, json });
-  if (provider === 'sarvam') return sarvamText({ system, text, image, json });
   if (provider === 'groq') return groqText({ system, text, image, json });
   return null; // mock handled by callers
 }
@@ -140,7 +148,7 @@ async function call({ system, text, image, json }) {
 async function answer({ question, screenshot }) {
   if (config.mockMode) {
     const seen = screenshot ? 'I can see your screen' : 'I do not have a screenshot';
-    return `Sure thing - ${seen}. I am in mock mode; add a Gemini key in Settings for real answers about "${question || 'what is on my screen'}".`;
+    return `Sure thing - ${seen}. I am in mock mode; add a vision key (Gemini) in Settings for real answers about "${question || 'what is on my screen'}".`;
   }
   const text = await call({
     system: ASSISTANT_SYSTEM,
@@ -157,10 +165,10 @@ async function chat({ system = ASSISTANT_SYSTEM, text, screenshot }) {
 }
 
 // Structured JSON output. Falls back to mock object on error / mock mode.
-async function json({ system, text, screenshot, fallback }) {
+async function json({ system, text, screenshot, fallback, fast }) {
   if (config.mockMode) return fallback || {};
   try {
-    const raw = await call({ system, text, image: currentImage(screenshot), json: true });
+    const raw = await call({ system, text, image: currentImage(screenshot), json: true, fast });
     const start = raw.indexOf('{');
     const end = raw.lastIndexOf('}');
     if (start === -1 || end === -1) return fallback || {};

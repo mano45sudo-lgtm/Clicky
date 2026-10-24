@@ -10,7 +10,11 @@ Add-Type -AssemblyName System.Speech
 $rec = New-Object System.Speech.Recognition.SpeechRecognitionEngine
 $rec.LoadGrammar((New-Object System.Speech.Recognition.DictationGrammar))
 $rec.SetInputToWaveFile($Path)
-$rec.Recognize([System.Speech.Recognition.RecognizeMode]::Multiple)
+# Call Recognize(RecognizeMode) via reflection: PowerShell otherwise mis-resolves
+# the overload and tries to bind "Multiple" to a TimeSpan parameter.
+$mode = [System.Speech.Recognition.RecognizeMode]::Multiple
+$mi = $rec.GetType().GetMethod('Recognize', [Type[]]@([System.Speech.Recognition.RecognizeMode]))
+[void]$mi.Invoke($rec, [object[]]@($mode))
 
 foreach ($r in $rec.Results) {
   if ($r.Text) { [Console]::Out.WriteLine($r.Text) }

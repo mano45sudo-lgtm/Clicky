@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('clicky', {
   onPoint: (cb) => on('clicky:point', cb),
   onRecord: (cb) => on('clicky:record', cb),
   onConversation: (cb) => on('clicky:conversation', cb),
+  onDraw: (cb) => on('clicky:draw', cb),
+  onGuide: (cb) => on('clicky:guide', cb),
   onPrefillAgent: (cb) => on('clicky:prefill-agent', cb),
 
   // --- overlay -> main (recorded audio) ---
@@ -29,13 +31,20 @@ contextBridge.exposeInMainWorld('clicky', {
   walkthrough: (text) => ipcRenderer.invoke('clicky:walkthrough', { text }),
   agent: (goal) => ipcRenderer.invoke('clicky:agent', { goal }),
   agentCancel: () => ipcRenderer.invoke('clicky:agent-cancel'),
+  agentConfirm: (decision) => ipcRenderer.invoke('clicky:agent-confirm', { decision }),
   capture: () => ipcRenderer.invoke('capture-screen'),
   conversationToggle: () => ipcRenderer.invoke('clicky:conversation-toggle'),
 
   // --- settings + history ---
   settingsGet: () => ipcRenderer.invoke('settings:get'),
   settingsSave: (partial) => ipcRenderer.invoke('settings:save', partial),
-  historyGet: () => ipcRenderer.invoke('history:get')
+  historyGet: () => ipcRenderer.invoke('history:get'),
+
+  // --- diagnostics + onboarding ---
+  diagnose: () => ipcRenderer.invoke('clicky:diagnose'),
+  openExclusions: () => ipcRenderer.invoke('clicky:open-exclusions'),
+  openSettings: () => ipcRenderer.invoke('window:open-settings'),
+  onboardFinish: () => ipcRenderer.invoke('onboard:finish')
 });
 
 function on(channel, cb) {

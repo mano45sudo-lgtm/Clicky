@@ -1,12 +1,14 @@
 const FIELDS = [
-  'provider', 'geminiApiKey', 'anthropicApiKey', 'sarvamApiKey', 'groqApiKey', 'geminiModel', 'anthropicModel', 'sarvamModel', 'groqModel',
-  'sttProvider', 'ttsProvider', 'assemblyaiApiKey', 'elevenlabsApiKey', 'elevenlabsVoiceId',
-  'sarvamSttModel', 'sarvamTtsModel', 'sarvamSpeaker',
+  'provider', 'visionProvider', 'geminiApiKey', 'anthropicApiKey', 'groqApiKey', 'geminiModel', 'anthropicModel', 'groqModel',
+  'sttProvider', 'ttsProvider', 'assemblyaiApiKey',
+  'whisperCliPath', 'whisperModelPath', 'whisperLanguage',
+  'fishAudioApiKey', 'fishAudioBaseUrl', 'fishAudioModelId', 'fishAudioReferenceId',
   'voice', 'language', 'pttKeycode', 'toggleShortcut', 'conversationShortcut', 'vadSilenceMs', 'agentShortcut',
+  'stopShortcut', 'agentAllowlist',
   'webSearchProvider', 'serperApiKey', 'braveApiKey',
   'maxAnswerChars', 'sttTimeoutMs'
 ];
-const CHECKS = ['agentAllowFileWrites', 'agentAllowAppLaunch', 'agentAllowRunCommand', 'multiMonitor', 'allowAnalytics'];
+const CHECKS = ['agentAllowFileWrites', 'agentAllowAppLaunch', 'agentAllowRunCommand', 'agentAllowInput', 'agentConfirmDestructive', 'agentPreviewMode', 'multiMonitor', 'ttsConfirmations', 'autostart', 'allowAnalytics'];
 const NUMBERS = ['pttKeycode', 'maxAnswerChars', 'sttTimeoutMs', 'vadSilenceMs'];
 
 const msg = document.getElementById('msg');
@@ -42,5 +44,20 @@ document.getElementById('save').onclick = save;
 document.getElementById('reset').onclick = async () => {
   await save();
 };
+
+// Desktop-control self-check + a shortcut to the Defender exclusions page.
+const diag = document.getElementById('diagnoseMsg');
+const diagnoseBtn = document.getElementById('diagnoseBtn');
+const exclusionsBtn = document.getElementById('exclusionsBtn');
+if (diagnoseBtn) {
+  diagnoseBtn.onclick = async () => {
+    diag.style.color = '#94a3b8';
+    diag.textContent = 'Checking desktop control...';
+    const r = await window.clicky.diagnose();
+    diag.style.color = r && r.ok ? '#34d399' : '#f87171';
+    diag.textContent = (r && r.ok ? 'OK - ' : 'Blocked - ') + ((r && r.detail) || '');
+  };
+}
+if (exclusionsBtn) exclusionsBtn.onclick = () => window.clicky.openExclusions();
 
 if (window.clicky) load();

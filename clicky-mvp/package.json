@@ -1,18 +1,22 @@
 {
   "name": "heyclicky",
   "version": "0.1.0",
-  "description": "HeyClicky: a screen-aware, push-to-talk AI cursor buddy for desktop. Hold a key, speak, and it sees your screen, answers out loud, walks you through with pointing hints, and runs background agents. Works with Gemini or Claude; free OS speech by default.",
+  "description": "HeyClicky: a voice-first Windows desktop buddy. Hold a key and speak - it sees your screen, plans with a Groq brain, and acts via UI Automation, typing, and Chrome DevTools Protocol, with stop key and confirm-before-destructive guardrails.",
   "author": "HeyClicky",
   "license": "MIT",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "dist": "electron-builder --win",
+    "test:smoke": "node scripts/smoke.js",
+    "get:whisper": "node scripts/get-whisper-model.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
     "@google/generative-ai": "^0.21.0",
     "dotenv": "^16.4.5",
+    "electron-updater": "^6.3.9",
     "uiohook-napi": "^1.5.4"
   },
   "devDependencies": {
@@ -33,11 +37,18 @@
       "command.js",
       "settings.html",
       "settings.js",
+      "onboard.html",
+      "onboard.js",
       "services/**/*",
       "assets/**/*",
       "README.md",
       "package.json"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "heyclicky",
+      "repo": "heyclicky"
+    },
     "asarUnpack": [
       "**/node_modules/uiohook-napi/**"
     ],

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Welcome to HeyClicky</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: radial-gradient(1200px 600px at 50% -10%, #16233d, #0b1220);
+        color: #e5e7eb;
+        font: 14px/1.55 system-ui, "Segoe UI", sans-serif;
+      }
+      .wrap { max-width: 560px; margin: 0 auto; padding: 28px 26px 96px; }
+      .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+      .brand .dot { width: 14px; height: 14px; border-radius: 50%; background: #60a5fa; box-shadow: 0 0 16px #60a5fa; }
+      h1 { font-size: 22px; margin: 0; }
+      .sub { color: #94a3b8; margin: 6px 0 22px; }
+      .card {
+        background: #0f1a2e; border: 1px solid #1f2a44; border-radius: 14px;
+        padding: 16px 18px; margin-bottom: 14px;
+      }
+      .card h2 { font-size: 14px; margin: 0 0 6px; color: #93c5fd; }
+      .card p { margin: 0 0 8px; color: #cbd5e1; font-size: 13px; }
+      .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; margin: 2px 4px 2px 0; }
+      .pill.on { background: #14532d; color: #bbf7d0; }
+      .pill.off { background: #3f1d1d; color: #fecaca; }
+      button {
+        padding: 10px 16px; border-radius: 10px; border: 1px solid #1f2a44;
+        background: #111827; color: #e5e7eb; font: inherit; cursor: pointer;
+      }
+      button:hover { background: #1f2a44; }
+      button.primary { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+      button.primary:hover { background: #2563eb; }
+      .msg { font-size: 12px; color: #94a3b8; margin-top: 8px; min-height: 16px; }
+      .msg.ok { color: #34d399; }
+      .msg.bad { color: #f87171; }
+      .actions {
+        position: fixed; left: 0; right: 0; bottom: 0; padding: 14px 22px;
+        background: #0d1526; border-top: 1px solid #1f2a44; display: flex; gap: 10px; align-items: center;
+      }
+      .actions .spacer { margin-left: auto; }
+      kbd { background: #1f2a44; border: 1px solid #33415c; border-radius: 6px; padding: 1px 7px; font: 600 12px system-ui; }
+      a { color: #93c5fd; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="brand"><span class="dot"></span><h1>HeyClicky</h1></div>
+      <p class="sub">Your voice-first buddy that sees your screen and does things for you. Let's get you ready - about two minutes.</p>
+
+      <div class="card">
+        <h2>1. Hold to talk</h2>
+        <p>Hold the <kbd>Left Ctrl</kbd> key anywhere, speak your request, then let go. Clicky plans and does it - opening apps, writing, clicking.</p>
+      </div>
+
+      <div class="card">
+        <h2>2. Brains &amp; keys</h2>
+        <p id="keys">Checking your setup...</p>
+        <button id="openSettings">Open Settings</button>
+      </div>
+
+      <div class="card">
+        <h2>3. Can Clicky control this PC?</h2>
+        <p>It moves your real mouse and types using Windows automation. Some antivirus tools block that - check now.</p>
+        <button id="check">Run the check</button>
+        <button id="exclusions" style="display:none">Open Defender exclusions</button>
+        <div class="msg" id="checkMsg"></div>
+      </div>
+
+      <div class="card">
+        <h2>4. Watch it do one thing</h2>
+        <p>Press the button and Clicky will draw a smiley on your screen - a real action, safely.</p>
+        <button id="demo" class="primary">Draw me a smiley</button>
+        <div class="msg" id="demoMsg"></div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="skip">Skip for now</button>
+      <span class="spacer"></span>
+      <button id="done" class="primary">I'm ready</button>
+    </div>
+
+    <script src="onboard.js"></script>
+  </body>
+</html>
