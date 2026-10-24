@@ -9,6 +9,9 @@ Launch-readiness milestone release for Windows.
 ### Added
 - **Voice loop**: push-to-talk (hold Left Ctrl), Sarvam STT, Groq brain,
   Gemini vision, Sarvam/Bulbul TTS; command window and per-goal agent.
+- **Circle-to-ask**: hold Ctrl and drag the mouse to ring any on-screen area;
+  Clicky crops that region, listens for one spoken question, and answers about
+  just the circled part (the drag cancels hold-to-talk so they never clash).
 - **Acting agent** with 23 tools: openApp, clickOnScreen, typeInto, typeText,
   pressKey, runCommand, captureScreen, webSearch, file tools, notes, reminders,
   email drafts, drawing, and browser tools (navigate/click/type).

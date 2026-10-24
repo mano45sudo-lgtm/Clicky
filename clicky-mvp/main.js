@@ -2,7 +2,7 @@ const path = require('path');
 const { app, BrowserWindow, screen, ipcMain, globalShortcut, Tray, Menu, nativeImage, session, shell } = require('electron');
 
 const providers = require('./services/providers');
-const { captureCursorDisplay, capturePrimaryDisplay } = require('./services/capture');
+const { captureCursorDisplay, capturePrimaryDisplay, captureDisplay } = require('./services/capture');
 const hotkey = require('./services/hotkey');
 const { Overlays } = require('./services/overlays');
 const { Agent } = require('./services/agent');
@@ -29,6 +29,14 @@ let audioWait = null;
 let busy = false;
 let pttStart = 0; // when the current hold-to-talk press began
 let conversationMode = false; // optional hands-free loop (Alt+V)
+
+// --- "circle an area to ask" gesture state ----------------------------------
+// While Ctrl is held and the mouse is dragged, we track a selection rectangle
+// (absolute screen px), draw it on the overlay, then on release capture that
+// region and answer the next spoken question using the cropped image.
+let region = null; // { displayId, x0, y0, x1, y1 }
+let regionShot = null; // pending cropped screenshot for the next utterance
+let regionQuestionMode = false; // one-shot: answer the next utterance about regionShot
 
 // --- UI fan-out --------------------------------------------------------------
 function sendToUI(channel, payload) {
@@ -60,14 +68,18 @@ function mockAnswerMessage(errMessage) {
 }
 
 // --- Answer (shared by voice, typed, history) -------------------------------
-async function respond(question) {
+// presetShot, when given, is used INSTEAD of a fresh full-screen capture (used by
+// the "circle an area to ask" gesture so Clicky sees only the region you drew).
+async function respond(question, presetShot) {
   setState('thinking', { question });
 
-  let screenshot = null;
-  try {
-    screenshot = await captureCursorDisplay();
-  } catch (e) {
-    console.error('[capture] failed', e.message);
+  let screenshot = presetShot || null;
+  if (!screenshot) {
+    try {
+      screenshot = await captureCursorDisplay();
+    } catch (e) {
+      console.error('[capture] failed', e.message);
+    }
   }
 
   let answer;
@@ -92,6 +104,113 @@ async function respond(question) {
 
   setState('idle');
   busy = false;
+}
+
+// --- "Circle an area to ask" ------------------------------------------------
+// Crop a rectangle (absolute screen px) out of the owning display's capture and
+// return it in the same {base64, mediaType, ...} shape the vision brain expects.
+async function captureRegion(abs, display) {
+  const full = await captureDisplay(display.id);
+  if (!full) return null;
+  const sf = display.scaleFactor || 1;
+  const img = nativeImage.createFromBuffer(Buffer.from(full.base64, 'base64'));
+  const size = img.getSize();
+  const cx = Math.round((abs.x - display.bounds.x) * sf);
+  const cy = Math.round((abs.y - display.bounds.y) * sf);
+  const cw = Math.round(abs.w * sf);
+  const ch = Math.round(abs.h * sf);
+  const crop = {
+    x: Math.max(0, Math.min(cx, size.width - 1)),
+    y: Math.max(0, Math.min(cy, size.height - 1)),
+    width: Math.max(1, Math.min(cw, size.width)),
+    height: Math.max(1, Math.min(ch, size.height))
+  };
+  const cropped = img.crop(crop);
+  return {
+    base64: cropped.toPNG().toString('base64'),
+    mediaType: 'image/png',
+    width: cropped.getSize().width,
+    height: cropped.getSize().height,
+    displayId: display.id
+  };
+}
+
+function displayOf(id) {
+  return screen.getAllDisplays().find((d) => String(d.id) === String(id)) || screen.getPrimaryDisplay();
+}
+function absRectOf(r) {
+  const x = Math.min(r.x0, r.x1), y = Math.min(r.y0, r.y1);
+  return { x, y, w: Math.abs(r.x1 - r.x0), h: Math.abs(r.y1 - r.y0) };
+}
+
+// Abort the push-to-talk capture that started on Ctrl key-down (a drag means the
+// user is selecting, not speaking).
+function cancelVoiceForRegion() {
+  overlays.sendToDisplay('clicky:record', { on: false }, cursorDisplayId());
+  if (audioWait) {
+    try { audioWait.resolve(null); } catch (e) {}
+    audioWait = null;
+  }
+  busy = false;
+  setState('idle');
+}
+
+function pushRegionRect() {
+  if (!region) return;
+  const d = displayOf(region.displayId);
+  const a = absRectOf(region);
+  overlays.sendToDisplay('clicky:select', { x: a.x - d.bounds.x, y: a.y - d.bounds.y, w: a.w, h: a.h }, region.displayId);
+}
+
+function onRegionStart(pt) {
+  const d = screen.getDisplayNearestPoint(pt);
+  region = { displayId: d.id, x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y };
+  pushRegionRect();
+}
+
+function onRegionDrag(pt) {
+  if (!region) return;
+  region.x1 = pt.x;
+  region.y1 = pt.y;
+  pushRegionRect();
+}
+
+async function onRegionEnd(pt) {
+  if (!region) return;
+  region.x1 = pt.x;
+  region.y1 = pt.y;
+  const d = displayOf(region.displayId);
+  const abs = absRectOf(region);
+  const did = region.displayId;
+  region = null;
+  overlays.sendToDisplay('clicky:select', null, did);
+  if (abs.w < 14 || abs.h < 14) return; // a Ctrl+click, not a drawn area
+  await startRegionQuestion(abs, d);
+}
+
+// Capture the just-drawn region, then listen for ONE spoken question about it.
+async function startRegionQuestion(abs, d) {
+  setState('thinking', { question: 'Looking at the area you circled…' });
+  let shot = null;
+  try {
+    shot = await captureRegion(abs, d);
+  } catch (e) {
+    log.error('region', 'capture failed', { error: e.message });
+  }
+  if (!shot) {
+    const msg = 'I could not capture that area. Please try circling it again.';
+    setState('speaking', { answer: msg });
+    sendResult({ question: '', answer: msg });
+    await providers.tts.speak(msg).catch(() => {});
+    setState('idle');
+    return;
+  }
+  regionShot = shot;
+  regionQuestionMode = true;
+  busy = false; // let the upcoming utterance through handleUtterance
+  log.info('region', 'area selected, listening for a question', { w: abs.w, h: abs.h });
+  setState('listening');
+  overlays.sendToDisplay('clicky:conversation', { on: true, silenceMs: store.read().vadSilenceMs }, cursorDisplayId());
 }
 
 // --- Push to talk -----------------------------------------------------------
@@ -230,6 +349,8 @@ async function handleUtterance(buffer) {
 
   if (!buffer) {
     // Overlay reported the microphone was unavailable.
+    regionQuestionMode = false;
+    regionShot = null;
     const msg = 'I could not access your microphone.';
     endConversation();
     setState('speaking', { answer: msg });
@@ -247,6 +368,16 @@ async function handleUtterance(buffer) {
     console.error('[stt] failed', e.message);
   }
   console.log(`[clicky] transcript: ${JSON.stringify(question)}`);
+
+  // A one-shot "circle an area" question: answer using the cropped region image.
+  if (regionQuestionMode) {
+    const shot = regionShot;
+    regionQuestionMode = false;
+    regionShot = null;
+    if (!question) question = 'What is this? Tell me what the circled area is and how I use it.';
+    await respond(question, shot);
+    return;
+  }
 
   if (!question) {
     setState('idle');
@@ -452,6 +583,7 @@ function createTray() {
     { label: 'Talk (hold Ctrl, or press Alt+V)', click: openCommandWindow },
     { label: 'Ask about my screen', click: () => { if (!busy) { busy = true; respond('What is on my screen right now? Summarize what I am looking at and suggest a next step.'); } } },
     { label: 'Walk me through this', click: () => runWalkthrough('') },
+    { label: 'Circle-to-ask: hold Ctrl, drag over an area, then ask', enabled: false },
     { type: 'separator' },
     { label: 'STOP the agent', accelerator: 'Esc', click: () => cancelAgent() },
     { label: 'Settings', click: openSettingsWindow },
@@ -482,7 +614,15 @@ function registerShortcuts() {
 
 function startHotkeys() {
   // Hold Left Ctrl to talk; release to run the spoken command as an action.
-  hotkey.start({ onDown: onHotkeyDown, onUp: onHotkeyUp });
+  // Hold Ctrl and drag the mouse to circle an area and ask about it instead.
+  hotkey.start({
+    onDown: onHotkeyDown,
+    onUp: onHotkeyUp,
+    onRegionCancel: cancelVoiceForRegion,
+    onRegionStart,
+    onRegionDrag,
+    onRegionEnd
+  });
 }
 
 // --- IPC --------------------------------------------------------------------

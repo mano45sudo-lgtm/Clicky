@@ -24,6 +24,7 @@ const fxCanvas = document.getElementById('fx');
 const fctx = fxCanvas.getContext('2d');
 let drawItems = [];
 let guide = null; // { x, y, label, since }
+let selRect = null; // { x, y, w, h } display-local: the "circle to ask" marquee
 
 const target = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 const pos = { x: target.x, y: target.y };
@@ -159,6 +160,9 @@ if (window.clicky) {
       if (!p || p.clear) { guide = null; return; }
       guide = { x: p.x, y: p.y, label: p.label || '', since: performance.now() };
     });
+  }
+  if (window.clicky.onSelect) {
+    window.clicky.onSelect((r) => { selRect = r && r.w > 0 && r.h > 0 ? r : null; });
   }
 }
 
@@ -481,11 +485,32 @@ function drawBubble(g, x, y, name, message, accent) {
   if (message) { g.fillStyle = '#e5f6fb'; g.font = `700 ${fs}px system-ui, "Segoe UI", sans-serif`; g.fillText(message, bx + padX, ty); }
 }
 
-// Animated guide: a pulsing target + an arrow leading from the buddy (cursor) to it.
+// Animated guide + the "circle to ask" selection marquee.
 function drawFx() {
   sizeLayer(fxCanvas);
   const W = fxCanvas.width, H = fxCanvas.height, S = Math.min(W, H);
   fctx.clearRect(0, 0, W, H);
+
+  // Selection ellipse: the area the user circled to ask about.
+  if (selRect) {
+    const t = performance.now() / 1000;
+    const cx = selRect.x + selRect.w / 2;
+    const cy = selRect.y + selRect.h / 2;
+    const rx = selRect.w / 2 + 6 + Math.sin(t * 4) * 2;
+    const ry = selRect.h / 2 + 6 + Math.sin(t * 4) * 2;
+    fctx.save();
+    fctx.beginPath();
+    fctx.ellipse(cx, cy, Math.max(6, rx), Math.max(6, ry), 0, 0, Math.PI * 2);
+    fctx.fillStyle = 'rgba(34, 211, 238, 0.12)';
+    fctx.fill();
+    fctx.lineWidth = Math.max(3, S * 0.005);
+    fctx.strokeStyle = '#22d3ee';
+    fctx.setLineDash([14, 9]);
+    fctx.lineDashOffset = -t * 40;
+    fctx.stroke();
+    fctx.restore();
+  }
+
   if (!guide) return;
   if (performance.now() - guide.since > 12000) { guide = null; return; }
   const gx = mapX(guide.x != null ? guide.x : 0.5, W);

@@ -19,9 +19,12 @@ hold hotkey -> speak -> transcribe (Sarvam) -> brain (Groq) plans tools
 -> every step verified, progress shown beside the cursor, result spoken back
 ```
 
-Three ways to use it:
+Ways to use it:
 
 - **Push-to-talk**: hold **Left Ctrl**, speak, release.
+- **Circle-to-ask**: hold **Ctrl** and **drag the mouse** to draw a ring around
+  any part of the screen, release, then ask "what is this?" — Clicky reads just
+  that area and answers (the drag cancels hold-to-talk, so the two never clash).
 - **Command window** (tray icon or Alt+\\): type a question, or press
   **Walk me through** / **Run Agent**.
 - **Agent** (Alt+G): give a goal; Clicky plans and runs tools in the background.
@@ -30,6 +33,8 @@ Three ways to use it:
 
 - **Voice-first assistant** with screen-aware Q&A, walkthroughs with an animated
   pointer ring, and out-loud answers.
+- **Circle-to-ask**: Ctrl + mouse-drag to ring any on-screen area and ask about
+  just that region (it is cropped and sent to the vision model).
 - **Acting agent with 23 tools**: `openApp`, `clickOnScreen`, `typeInto`,
   `typeText`, `pressKey`, `runCommand`, `captureScreen`, `webSearch`, file
   read/write/list, notes, reminders, email drafts, drawing, and three browser
@@ -156,6 +161,8 @@ greatly reduces AV noise.
 - Windows-first. The UIA driver, CDP path, and OS speech are Windows features;
   macOS/Linux builds exist but act without UI Automation.
 - Vision locate is best-effort for non-UIA surfaces (games, custom-drawn apps).
+- Circle-to-ask and push-to-talk assume the display is at 100% scaling; on
+  heavily DPI-scaled secondary monitors the crop may be slightly offset.
 - The pointer overlay is click-through; Command/Settings/Onboarding are normal
   windows.
 - Unsigned beta builds trigger a SmartScreen warning on first run (*More info →

@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('clicky', {
   onConversation: (cb) => on('clicky:conversation', cb),
   onDraw: (cb) => on('clicky:draw', cb),
   onGuide: (cb) => on('clicky:guide', cb),
+  onSelect: (cb) => on('clicky:select', cb),
   onPrefillAgent: (cb) => on('clicky:prefill-agent', cb),
 
   // --- overlay -> main (recorded audio) ---
