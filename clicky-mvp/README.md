@@ -39,10 +39,12 @@ Ways to use it:
   `typeText`, `pressKey`, `runCommand`, `captureScreen`, `webSearch`, file
   read/write/list, notes, reminders, email drafts, drawing, and three browser
   tools (`browserNavigate`, `browserClick`, `browserType`).
-- **UIA-first control**: clicks and typing go through Windows UI Automation
-  (InvokePattern / ValuePattern fast paths) with SendKeys fallback — precise,
-  reliable, and no clipboard trampling. The guide arrow never appears during
-  real actions.
+- **UIA-first control with verify-after-act**: clicks and typing go through Windows
+  UI Automation (InvokePattern / ValuePattern fast paths) with SendKeys fallback —
+  precise, reliable, and no clipboard trampling. After typing, `typeInto`/`typeText`
+  read the field back to confirm the text really landed, and a field that stayed
+  empty is reported as a failure so the agent retries instead of falsely claiming
+  success. The guide arrow never appears during real actions.
 - **Persistent input server**: one hidden PowerShell process serves every input
   action, removing the ~400 ms cold start per click/keypress (automatic
   one-shot fallback if the server dies).

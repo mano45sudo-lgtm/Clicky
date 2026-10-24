@@ -55,6 +55,29 @@ async function visionLocate(target, { fast } = {}) {
   return { found: true, confidence, x: c01(data.x), y: c01(data.y), label: data.label };
 }
 
+// --- verify-after-act -------------------------------------------------------
+// Read the focused control's text so we can confirm typed text actually landed
+// (the fix for "it reported success but nothing appeared"). Returns the raw string
+// when readable, or null when the control's value can't be read (web content,
+// custom controls) - callers must treat null as "unknown", never as a failure.
+function normText(s) {
+  return String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim();
+}
+async function readFocused() {
+  const rv = await control.readValue().catch(() => null);
+  if (!rv || rv.error || rv.noread || typeof rv.value !== 'string') return null;
+  return rv.value;
+}
+// 'ok' = readable AND contains what we typed; 'miss' = readable but our text is
+// absent (real no-op); 'unknown' = not readable (leave the success claim intact).
+async function verifyLanded(body) {
+  const v = await readFocused();
+  if (v === null) return 'unknown';
+  const expect = normText(body);
+  if (!expect) return 'ok';
+  return normText(v).includes(expect.slice(0, Math.min(60, expect.length))) ? 'ok' : 'miss';
+}
+
 // Friendly names -> something Windows can actually launch (exe, URI, or file).
 const APP_ALIASES = {
   notepad: 'notepad', word: 'winword', excel: 'excel', powerpoint: 'powerp',
@@ -342,7 +365,17 @@ const tools = {
       if (!inputEnabled()) return { error: 'keyboard control is disabled in Settings (turn on "Control the mouse and keyboard")' };
       const body = String(text == null ? '' : text);
       const r = await control.type(body);
-      return r && r.error ? r : { typed: true, chars: body.length };
+      if (r && r.error) return r;
+      // Light verify: if the focused field is readable and still EMPTY, the
+      // keystrokes went nowhere - retype once. Never retype when content already
+      // exists, so appending to a document/body never duplicates.
+      const v = await readFocused();
+      let verified = null;
+      if (v !== null && body.trim() !== '') {
+        if (v.trim() === '') { await control.type(body); verified = false; }
+        else verified = normText(v).includes(normText(body).slice(0, 60));
+      }
+      return { typed: true, verified, chars: body.length };
     }
   },
   pressKey: {
@@ -365,32 +398,51 @@ const tools = {
       if (!inputEnabled()) return { error: 'keyboard control is disabled in Settings (turn on "Control the mouse and keyboard")' };
       const t = String(target || '').trim();
       const body = String(text == null ? '' : text);
+      // Remember HOW we filled it so a verify miss can retry the same way.
+      let fill = null;
       for (const name of knowledge.candidateNames(t)) {
         const r = await control.typeName(name, body);
-        if (r && r.found) return { typed: true, via: 'uia', chars: body.length, target: t };
+        if (r && r.found) { fill = { via: 'uia', rerun: () => control.typeName(name, body) }; break; }
         // Ignore a UIA error here too: keep going so we still reach the vision
         // fallback below (web fields are exactly where UIA errors / finds nothing).
         const c = await control.clickName(name);
         if (c && c.found) {
           await new Promise((res) => setTimeout(res, 350));
           await control.type(body);
-          return { typed: true, via: 'click+type', chars: body.length, target: t };
+          fill = { via: 'click+type', rerun: async () => { await control.clickName(name); await new Promise((res) => setTimeout(res, 400)); await control.type(body); } };
+          break;
         }
       }
       // UIA is blind inside Chrome/Edge web fields (Gmail/Outlook compose, search
       // boxes, React inputs). Fall back to looking at the screen: find the field,
       // click to focus it, then type real keystrokes. This is what makes "write the
       // email in the message body" land without the user clicking first.
-      let loc = await visionLocate(t, { fast: true });
-      if (!loc.found && !loc.error) loc = await visionLocate(t, { fast: false });
-      if (loc.found) {
-        const { px, py } = fracToPx(loc.x, loc.y);
-        await control.run('click', { x: px, y: py });
-        await new Promise((res) => setTimeout(res, 400));
-        await control.type(body);
-        return { typed: true, via: 'vision', chars: body.length, target: t };
+      if (!fill) {
+        let loc = await visionLocate(t, { fast: true });
+        if (!loc.found && !loc.error) loc = await visionLocate(t, { fast: false });
+        if (loc.found) {
+          const { px, py } = fracToPx(loc.x, loc.y);
+          await control.run('click', { x: px, y: py });
+          await new Promise((res) => setTimeout(res, 400));
+          await control.type(body);
+          fill = { via: 'vision', rerun: async () => { await control.run('click', { x: px, y: py }); await new Promise((res) => setTimeout(res, 500)); await control.type(body); } };
+        }
       }
-      return { typed: false, error: 'field not found: ' + t, target: t };
+      if (!fill) return { typed: false, error: 'field not found: ' + t, target: t };
+
+      // VERIFY the text landed. A field we can read but that is still missing our
+      // text is reported typed:false after one corrective retry, which trips the
+      // agent's re-plan loop instead of falsely claiming the task is done.
+      let state = await verifyLanded(body);
+      if (state === 'miss') {
+        await Promise.resolve(fill.rerun());
+        await new Promise((res) => setTimeout(res, 300));
+        state = await verifyLanded(body);
+      }
+      if (state === 'miss') {
+        return { typed: false, verified: false, via: fill.via, error: 'typed but the field is still empty: ' + t, target: t };
+      }
+      return { typed: true, verified: state === 'ok', via: fill.via, chars: body.length, target: t };
     },
   },
   composeEmail: {

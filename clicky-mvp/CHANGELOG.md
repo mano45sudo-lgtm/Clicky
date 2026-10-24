@@ -5,6 +5,13 @@ All notable changes to HeyClicky are documented here.
 ## [Unreleased]
 
 ### Added
+- **Verify-after-act for typing**: `typeInto` and `typeText` now read the focused
+  field's value back through Windows UI Automation and confirm the text actually
+  landed. If a field we *can* read is still empty, the step is reported as failed
+  after one corrective retry - which finally trips the agent's re-plan loop instead
+  of falsely claiming success. Web fields where UIA is blind return a `noread` token,
+  so verification is skipped there and never causes a false failure or a double-typed
+  email.
 - **Cursor micro-interactions**: the pointer now leans into its direction of
   travel, occasionally blinks, grows with speed, and leaves a faint motion
   trail. A state-reactive presence ring surrounds it - expanding emerald rings

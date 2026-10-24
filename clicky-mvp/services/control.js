@@ -18,6 +18,8 @@ const SCRIPT = path.join(__dirname, '..', 'assets', 'input.ps1');
 function parseResult(text, action, code) {
   const t = (text || '').trim();
   if (/^err\b/.test(t)) return { error: t.slice(3).trim() || 'input error' };
+  if (/^noread\b/.test(t)) return { ok: true, action, noread: true };
+  if (/^value\b/.test(t)) return { ok: true, action, value: t.slice(5).trim() };
   const m = t.match(/found\s+(\d+)\s+(\d+)/);
   if (m) return { ok: true, action, found: true, x: Number(m[1]), y: Number(m[2]) };
   if (/\bnotfound\b/.test(t)) return { ok: true, action, found: false };
@@ -180,5 +182,6 @@ module.exports = {
   key: (key) => run('key', { key }),
   findName: (name) => run('findName', { name }),
   clickName: (name) => run('clickName', { name }),
-  typeName: (name, text) => run('typeName', { name, text })
+  typeName: (name, text) => run('typeName', { name, text }),
+  readValue: () => run('readValue')
 };

@@ -16,6 +16,7 @@ param(
 #   typeName   -> UIA: focus a control by name, then type text into it
 #   type       -> type text into the focused control (SendKeys, escaped)
 #   key        -> SendKeys sequence (e.g. "{Enter}", "^s")
+#   readValue  -> UIA: read the focused control's current text (for verify-after-act)
 # Typing uses SendKeys (real VK key events -> proven to land in Word/apps) with
 # the special chars escaped, so we never touch the clipboard (which antivirus
 # flagged) and never rely on KEYEVENTF_UNICODE (which some apps drop silently).
@@ -26,7 +27,7 @@ param(
 #   * -Server : stay alive and read ONE JSON command per stdin line, printing one
 #     result line per command. This removes the ~400ms PowerShell cold-start + the
 #     UIAutomation assembly load from every action (the biggest remaining latency).
-# Result tokens (shared): "found <x> <y>" | "found" | "notfound" | "ok" | "err <msg>".
+# Result tokens (shared): "found <x> <y>" | "found" | "notfound" | "ok" | "value <text>" | "noread" | "err <msg>".
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
@@ -209,6 +210,34 @@ function Invoke-Action($a, [double]$x, [double]$y, [string]$name, [string]$key, 
     }
     'type' { Send-Text $text; return 'ok' }
     'key' { if ($key) { [System.Windows.Forms.SendKeys]::SendWait($key) }; return 'ok' }
+    'readValue' {
+      # Read the currently focused element's text so the caller can confirm typed
+      # text actually landed. Return 'value <text>' ONLY when a real Value/Text
+      # pattern exists (native fields). If neither pattern is present (web content,
+      # custom controls where UIA is blind) return 'noread' so the caller skips the
+      # check instead of falsely treating an unreadable field as empty.
+      $AE = [System.Windows.Automation.AutomationElement]
+      $e = $null
+      try { $e = $AE::FocusedElement } catch {}
+      if (-not $e) { try { $e = $AE::FromHandle([ClickyIn]::GetForegroundWindow()) } catch {} }
+      if (-not $e) { return 'noread' }
+      $val = $null
+      try {
+        $vp = $null
+        if ($e.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp)) { $val = [string]$vp.Current.Value }
+      } catch {}
+      if ($null -eq $val) {
+        try {
+          $tp = $null
+          if ($e.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$tp)) { $val = [string]$tp.DocumentRange.GetText(200) }
+        } catch {}
+      }
+      if ($null -eq $val) { return 'noread' }
+      $clean = ($val -replace '[\r\n\t]+', ' ')
+      $clean = ($clean -replace '\s+', ' ')
+      if ($clean.Length -gt 200) { $clean = $clean.Substring(0, 200) }
+      return ('value ' + $clean)
+    }
     default { return 'ok' }
   }
 }
