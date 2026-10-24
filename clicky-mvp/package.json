@@ -1,0 +1,60 @@
+{
+  "name": "heyclicky",
+  "version": "0.1.0",
+  "description": "HeyClicky: a screen-aware, push-to-talk AI cursor buddy for desktop. Hold a key, speak, and it sees your screen, answers out loud, walks you through with pointing hints, and runs background agents. Works with Gemini or Claude; free OS speech by default.",
+  "author": "HeyClicky",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@google/generative-ai": "^0.21.0",
+    "dotenv": "^16.4.5",
+    "uiohook-napi": "^1.5.4"
+  },
+  "devDependencies": {
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.heyclicky.app",
+    "productName": "HeyClicky",
+    "files": [
+      "main.js",
+      "preload.js",
+      "config.js",
+      "store.js",
+      "index.html",
+      "renderer.js",
+      "command.html",
+      "command.js",
+      "settings.html",
+      "settings.js",
+      "services/**/*",
+      "assets/**/*",
+      "README.md",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/uiohook-napi/**"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "category": "Utility",
+      "target": ["AppImage", "deb"]
+    }
+  }
+}
