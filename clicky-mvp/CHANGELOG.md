@@ -12,6 +12,11 @@ All notable changes to HeyClicky are documented here.
   sky equalizer while speaking.
 
 ### Changed
+- **Stronger open-source planning brain**: the agent/assistant brain now runs on
+  **Qwen3-235B via OpenRouter** (`openrouter` provider) instead of the fast Groq
+  model, for markedly better multi-step tool planning. If Qwen3 is rate-limited it
+  auto-falls back to DeepSeek-V3.2 / Qwen3-Next / Groq. Groq stays configured as an
+  instant fallback brain and Gemini remains the vision/eyes provider.
 - **Faster perceived voice**: releasing the talk key now shows "Thinking..."
   immediately, and the screen capture runs in parallel with transcription
   instead of after it (hands-free and push-to-talk both benefit).

@@ -22,11 +22,13 @@ function forcedMock() {
 function llmProvider() {
   const st = s();
   if (forcedMock() || st.provider === 'mock') return 'mock';
+  if (st.provider === 'openrouter') return st.openRouterApiKey ? 'openrouter' : 'mock';
   if (st.provider === 'gemini') return st.geminiApiKey ? 'gemini' : 'mock';
   if (st.provider === 'anthropic') return st.anthropicApiKey ? 'anthropic' : 'mock';
   if (st.provider === 'sarvam') return st.sarvamApiKey ? 'sarvam' : 'mock';
   if (st.provider === 'groq') return st.groqApiKey ? 'groq' : 'mock';
-  // auto-detect when provider unset
+  // auto-detect when provider unset: prefer the strongest open planner first
+  if (st.openRouterApiKey) return 'openrouter';
   if (st.groqApiKey) return 'groq';
   if (st.geminiApiKey) return 'gemini';
   if (st.anthropicApiKey) return 'anthropic';
@@ -42,10 +44,11 @@ function visionProvider() {
   const st = s();
   if (forcedMock() || st.provider === 'mock') return 'mock';
   const pref = (st.visionProvider || process.env.CLICKY_VISION || '').toLowerCase();
-  const hasKey = (p) => (p === 'gemini' ? !!st.geminiApiKey : p === 'anthropic' ? !!st.anthropicApiKey : false);
+  const hasKey = (p) => (p === 'gemini' ? !!st.geminiApiKey : p === 'anthropic' ? !!st.anthropicApiKey : p === 'openrouter' ? !!st.openRouterApiKey : false);
   if (pref && hasKey(pref)) return pref;
   if (st.geminiApiKey) return 'gemini';
   if (st.anthropicApiKey) return 'anthropic';
+  if (st.openRouterApiKey) return 'openrouter';
   return llmProvider();
 }
 
@@ -96,6 +99,12 @@ module.exports = {
   get groqApiKey() {
     return s().groqApiKey;
   },
+  get openRouterApiKey() {
+    return s().openRouterApiKey;
+  },
+  get openRouterModel() {
+    return s().openRouterModel;
+  },
   get geminiModel() {
     return s().geminiModel;
   },
@@ -110,6 +119,7 @@ module.exports = {
   },
   get model() {
     const p = llmProvider();
+    if (p === 'openrouter') return s().openRouterModel;
     if (p === 'groq') return s().groqModel;
     if (p === 'gemini') return s().geminiModel;
     if (p === 'sarvam') return s().sarvamModel;

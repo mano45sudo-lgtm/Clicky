@@ -1,4 +1,4 @@
-// Unified LLM brain. Providers: groq | gemini | anthropic | sarvam | mock. Single-user-turn
+// Unified LLM brain. Providers: openrouter | groq | gemini | anthropic | sarvam | mock. Single-user-turn
 // calls (text + strict JSON) are all the assistant, walkthroughs, and agent
 // need. Vision is passed as an inline image part when a screenshot exists.
 const Anthropic = require('@anthropic-ai/sdk');
@@ -181,11 +181,80 @@ async function groqText({ system, text, image, json }) {
   return ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '').trim();
 }
 
+// OpenRouter: one key to the whole high-end open-source catalog (Qwen3, DeepSeek,
+// Llama). Used as the agent's planning brain because Qwen3-235B is a markedly
+// stronger multi-step/tool-calling planner than the fast Groq model. OpenAI-
+// compatible /chat/completions; JSON is requested through the prompt (not
+// response_format) because strict mode is inconsistent across these open models,
+// and llm.json extracts the object. A fallback chain rides out any single model
+// being rate-limited or down, mirroring the Gemini resilience pattern.
+async function openRouterText({ system, text, image, json, fast }) {
+  const key = config.openRouterApiKey;
+  const models = [];
+  const push = (m) => { if (m && !models.includes(m)) models.push(m); };
+  if (image) {
+    // Only reached if OpenRouter is chosen as the EYES; use a vision-capable model.
+    ['qwen/qwen3-vl-32b-instruct', 'qwen/qwen3-vl-30b-a3b-instruct', 'qwen/qwen3-vl-235b-a22b-instruct'].forEach(push);
+  } else {
+    // Planning / text brain: configured model first, then strong open fallbacks.
+    push(config.openRouterModel);
+    ['deepseek/deepseek-v3.2', 'qwen/qwen3-next-80b-a3b-instruct', 'deepseek/deepseek-chat-v3.1', 'qwen/qwen3-235b-a22b-2507'].forEach(push);
+  }
+
+  const messages = [{ role: 'system', content: system + (json ? ' Respond with ONLY valid JSON.' : '') }];
+  let prompt = text;
+  if (json) prompt += '\n\nRespond with ONLY a valid JSON object, no prose.';
+  if (image) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.base64}` } }
+      ]
+    });
+  } else {
+    messages.push({ role: 'user', content: prompt });
+  }
+
+  let lastErr = new Error('OpenRouter unavailable');
+  for (const m of models) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://heyclicky.app',
+            'X-Title': 'HeyClicky'
+          },
+          body: JSON.stringify({ model: m, max_tokens: 4096, temperature: 0.3, messages })
+        });
+        if (res.status === 503 || res.status === 429 || res.status >= 500) {
+          lastErr = new Error(`OpenRouter ${m} HTTP ${res.status}`);
+          await sleep(attempt === 0 ? 250 : 500);
+          continue; // retry same model, then next model
+        }
+        if (!res.ok) { lastErr = new Error('OpenRouter HTTP ' + res.status + ' ' + (await res.text()).slice(0, 160)); break; }
+        const data = await res.json();
+        const out = ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '').trim();
+        if (out) return out;
+        lastErr = new Error(`OpenRouter ${m} returned empty`);
+      } catch (e) {
+        lastErr = e;
+        await sleep(200);
+      }
+    }
+  }
+  throw lastErr;
+}
+
 async function call({ system, text, image, json, fast }) {
   // Screenshots go to the vision provider (Gemini/Anthropic if a key exists);
   // text-only turns stay on the configured brain (Groq). This is what lets Clicky
   // "see" the screen and point at real controls while keeping a fast text brain.
   const provider = image ? config.visionProvider() : config.llmProvider();
+  if (provider === 'openrouter') return openRouterText({ system, text, image, json, fast });
   if (provider === 'gemini') return geminiText({ system, text, image, json, fast });
   if (provider === 'anthropic') return anthropicText({ system, text, image, json });
   if (provider === 'sarvam') return sarvamText({ system, text, image, json });

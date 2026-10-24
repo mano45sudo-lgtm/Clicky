@@ -9,16 +9,20 @@ let cached = null;
 function defaults() {
   return {
     // --- Brain (LLM) ---
-    provider: 'mock', // 'groq' | 'gemini' | 'anthropic' | 'sarvam' | 'mock'
+    provider: 'mock', // 'openrouter' | 'groq' | 'gemini' | 'anthropic' | 'sarvam' | 'mock'
     visionProvider: '', // '' = auto (pick a vision-capable key); or 'gemini' | 'anthropic'
     geminiApiKey: '',
     anthropicApiKey: '',
     sarvamApiKey: '',
     groqApiKey: '',
+    openRouterApiKey: '',
     geminiModel: 'gemini-3.5-flash',
     anthropicModel: 'claude-3-5-sonnet-latest',
     sarvamModel: 'sarvam-105b',
     groqModel: 'openai/gpt-oss-120b',
+    // High-end open-source planner. Qwen3-235B is the strongest open agentic/tool-
+    // calling model we tested; OpenRouter also serves DeepSeek/Llama as fallbacks.
+    openRouterModel: 'qwen/qwen3-235b-a22b-2507',
 
     // --- Speech ---
     sttProvider: 'os', // 'os' | 'assemblyai' | 'sarvam' | 'mock'
@@ -73,6 +77,8 @@ function seedFromEnv(settings) {
   if (e.SARVAM_API_KEY) { settings.sarvamApiKey = e.SARVAM_API_KEY; if (settings.provider === 'mock') settings.provider = 'sarvam'; }
   if (e.GROQ_API_KEY) { settings.groqApiKey = e.GROQ_API_KEY; if (settings.provider === 'mock') settings.provider = 'groq'; }
   if (e.GROQ_MODEL) settings.groqModel = e.GROQ_MODEL;
+  if (e.OPENROUTER_API_KEY) { settings.openRouterApiKey = e.OPENROUTER_API_KEY; if (settings.provider === 'mock') settings.provider = 'openrouter'; }
+  if (e.OPENROUTER_MODEL) settings.openRouterModel = e.OPENROUTER_MODEL;
   if (e.SARVAM_MODEL) settings.sarvamModel = e.SARVAM_MODEL;
   if (e.SARVAM_STT_MODEL) settings.sarvamSttModel = e.SARVAM_STT_MODEL;
   if (e.SARVAM_TTS_MODEL) settings.sarvamTtsModel = e.SARVAM_TTS_MODEL;
