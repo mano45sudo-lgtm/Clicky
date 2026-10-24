@@ -9,32 +9,26 @@ let cached = null;
 function defaults() {
   return {
     // --- Brain (LLM) ---
-    provider: 'mock', // 'groq' | 'gemini' | 'anthropic' | 'mock'
+    provider: 'mock', // 'groq' | 'gemini' | 'anthropic' | 'sarvam' | 'mock'
     visionProvider: '', // '' = auto (pick a vision-capable key); or 'gemini' | 'anthropic'
     geminiApiKey: '',
     anthropicApiKey: '',
+    sarvamApiKey: '',
     groqApiKey: '',
     geminiModel: 'gemini-3.5-flash',
     anthropicModel: 'claude-3-5-sonnet-latest',
+    sarvamModel: 'sarvam-105b',
     groqModel: 'openai/gpt-oss-120b',
 
     // --- Speech ---
-    sttProvider: 'whisper', // 'whisper' (local, open source) | 'os' | 'assemblyai' | 'mock'
-    ttsProvider: 'fishaudio', // 'fishaudio' (open source) | 'os' | 'mock'
+    sttProvider: 'os', // 'os' | 'assemblyai' | 'sarvam' | 'mock'
+    ttsProvider: 'os', // 'os' | 'elevenlabs' | 'sarvam' | 'mock'
     assemblyaiApiKey: '',
-    // Local Whisper (whisper.cpp). Leave paths blank to auto-detect in PATH
-    // and ./models; set them in Settings if the binary lives elsewhere.
-    whisperCliPath: '', // e.g. C:\whisper\whisper-cli.exe
-    whisperModelPath: '', // e.g. C:\whisper\models\ggml-base.en.bin
-    whisperLanguage: 'en', // 'auto' to detect
-    // Fish Audio TTS. Point Base URL at a self-hosted Fish Speech server
-    // (e.g. http://localhost:8080) for the fully open-source path, or use a
-    // fish.audio API key + model id for the hosted one. Neither set = OS voice.
-    fishAudioApiKey: '',
-    fishAudioBaseUrl: '',
-    fishAudioModelId: '',
-    fishAudioReferenceId: '',
-    fishAudioFormat: 'mp3',
+    elevenlabsApiKey: '',
+    elevenlabsVoiceId: '',
+    sarvamSttModel: 'saaras:v4',
+    sarvamTtsModel: 'bulbul:v3',
+    sarvamSpeaker: 'shubh', // bulbul voice (lowercase)
     voice: '', // named OS voice ("" = system default)
     language: 'en-US',
 
@@ -76,23 +70,25 @@ function seedFromEnv(settings) {
   const e = process.env;
   if (e.GEMINI_API_KEY) { settings.geminiApiKey = e.GEMINI_API_KEY; if (settings.provider === 'mock') settings.provider = 'gemini'; }
   if (e.ANTHROPIC_API_KEY) { settings.anthropicApiKey = e.ANTHROPIC_API_KEY; if (settings.provider === 'mock') settings.provider = 'anthropic'; }
+  if (e.SARVAM_API_KEY) { settings.sarvamApiKey = e.SARVAM_API_KEY; if (settings.provider === 'mock') settings.provider = 'sarvam'; }
   if (e.GROQ_API_KEY) { settings.groqApiKey = e.GROQ_API_KEY; if (settings.provider === 'mock') settings.provider = 'groq'; }
   if (e.GROQ_MODEL) settings.groqModel = e.GROQ_MODEL;
+  if (e.SARVAM_MODEL) settings.sarvamModel = e.SARVAM_MODEL;
+  if (e.SARVAM_STT_MODEL) settings.sarvamSttModel = e.SARVAM_STT_MODEL;
+  if (e.SARVAM_TTS_MODEL) settings.sarvamTtsModel = e.SARVAM_TTS_MODEL;
+  if (e.SARVAM_SPEAKER) settings.sarvamSpeaker = e.SARVAM_SPEAKER;
+  if (e.SARVAM_STT === '1') settings.sttProvider = 'sarvam';
+  if (e.SARVAM_TTS === '1') settings.ttsProvider = 'sarvam';
   if (e.CLICKY_PROVIDER) settings.provider = e.CLICKY_PROVIDER.toLowerCase();
   if (e.CLICKY_VISION) settings.visionProvider = e.CLICKY_VISION.toLowerCase();
   if (e.CLICKY_ALLOW_INPUT) settings.agentAllowInput = e.CLICKY_ALLOW_INPUT === '1';
   if (e.STT_PROVIDER) settings.sttProvider = e.STT_PROVIDER.toLowerCase();
   if (e.TTS_PROVIDER) settings.ttsProvider = e.TTS_PROVIDER.toLowerCase();
-  if (e.WHISPER_CLI) settings.whisperCliPath = e.WHISPER_CLI;
-  if (e.WHISPER_MODEL) settings.whisperModelPath = e.WHISPER_MODEL;
-  if (e.WHISPER_LANG) settings.whisperLanguage = e.WHISPER_LANG;
-  if (e.FISH_AUDIO_API_KEY) settings.fishAudioApiKey = e.FISH_AUDIO_API_KEY;
-  if (e.FISH_AUDIO_BASE_URL) settings.fishAudioBaseUrl = e.FISH_AUDIO_BASE_URL;
-  if (e.FISH_AUDIO_MODEL) settings.fishAudioModelId = e.FISH_AUDIO_MODEL;
-  if (e.FISH_AUDIO_REFERENCE) settings.fishAudioReferenceId = e.FISH_AUDIO_REFERENCE;
   if (e.GEMINI_MODEL) settings.geminiModel = e.GEMINI_MODEL;
   if (e.ANTHROPIC_MODEL) settings.anthropicModel = e.ANTHROPIC_MODEL;
   if (e.ASSEMBLYAI_API_KEY) { settings.assemblyaiApiKey = e.ASSEMBLYAI_API_KEY; settings.sttProvider = 'assemblyai'; }
+  if (e.ELEVENLABS_API_KEY) { settings.elevenlabsApiKey = e.ELEVENLABS_API_KEY; settings.ttsProvider = 'elevenlabs'; }
+  if (e.ELEVENLABS_VOICE_ID) settings.elevenlabsVoiceId = e.ELEVENLABS_VOICE_ID;
   if (e.WEB_SEARCH_PROVIDER) settings.webSearchProvider = e.WEB_SEARCH_PROVIDER.toLowerCase();
   if (e.SERPER_API_KEY) { settings.serperApiKey = e.SERPER_API_KEY; settings.webSearchProvider = 'serper'; }
   if (e.BRAVE_API_KEY) { settings.braveApiKey = e.BRAVE_API_KEY; settings.webSearchProvider = 'brave'; }

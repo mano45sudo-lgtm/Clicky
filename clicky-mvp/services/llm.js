@@ -1,4 +1,4 @@
-// Unified LLM brain. Providers: groq | gemini | anthropic | mock. Single-user-turn
+// Unified LLM brain. Providers: groq | gemini | anthropic | sarvam | mock. Single-user-turn
 // calls (text + strict JSON) are all the assistant, walkthroughs, and agent
 // need. Vision is passed as an inline image part when a screenshot exists.
 const Anthropic = require('@anthropic-ai/sdk');
@@ -96,6 +96,41 @@ async function anthropicText({ system, text, image, json }) {
   return resp.content.filter((b) => b.type === 'text').map((b) => b.text).join(' ').trim();
 }
 
+// Sarvam-105b via its OpenAI-compatible /v1/chat/completions endpoint. This
+// model is TEXT-ONLY (it rejects multimodal array content), so a screenshot
+// cannot be shown to it; we note that in the prompt and answer from text.
+async function sarvamText({ system, text, image, json }) {
+  const key = config.sarvamApiKey;
+  let prompt = text;
+  if (image) {
+    prompt += "\n\n(The user shared a screenshot, but you cannot view images. If the screen matters, briefly ask them to describe what they see.)";
+  }
+  if (json) prompt += "\n\nRespond with ONLY a valid JSON object, no prose.";
+
+  const body = {
+    model: config.sarvamModel,
+    max_tokens: 1024,
+    messages: [
+      { role: 'system', content: system + (json ? ' Respond with ONLY valid JSON.' : '') },
+      { role: 'user', content: prompt }
+    ]
+  };
+  if (json) body.response_format = { type: 'json_object' };
+
+  const res = await fetch('https://api.sarvam.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${key}`,
+      'api-subscription-key': key,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error('Sarvam HTTP ' + res.status + ' ' + (await res.text()).slice(0, 200));
+  const data = await res.json();
+  return ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '').trim();
+}
+
 // Groq via its OpenAI-compatible /openai/v1/chat/completions endpoint. Most Groq
 // models are text-only, so a screenshot is noted in the prompt unless the model
 // name contains "vision". JSON is requested through the prompt (not response_format)
@@ -140,6 +175,7 @@ async function call({ system, text, image, json, fast }) {
   const provider = image ? config.visionProvider() : config.llmProvider();
   if (provider === 'gemini') return geminiText({ system, text, image, json, fast });
   if (provider === 'anthropic') return anthropicText({ system, text, image, json });
+  if (provider === 'sarvam') return sarvamText({ system, text, image, json });
   if (provider === 'groq') return groqText({ system, text, image, json });
   return null; // mock handled by callers
 }

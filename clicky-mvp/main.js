@@ -55,7 +55,7 @@ function cursorDisplayId() {
 
 function mockAnswerMessage(errMessage) {
   return config.mockMode
-    ? 'I am in mock mode and hit a snag. Add a Groq or Gemini key in Settings for real answers.'
+    ? 'I am in mock mode and hit a snag. Add a Sarvam key in Settings for real answers.'
     : `Sorry, that did not work (${errMessage || 'unknown error'}).`;
 }
 

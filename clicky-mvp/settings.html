@@ -50,6 +50,7 @@
         <option value="groq">Groq (fast llama)</option>
         <option value="gemini">Gemini</option>
         <option value="anthropic">Claude (Anthropic)</option>
+        <option value="sarvam">Sarvam (105B)</option>
       </select>
       <label>Vision provider (who looks at the screen)</label>
       <select id="visionProvider">
@@ -84,23 +85,34 @@
         <div>
           <label>Speech-to-text</label>
           <select id="sttProvider">
-            <option value="whisper">Whisper (local, open source)</option>
             <option value="os">OS native (Windows SAPI)</option>
             <option value="assemblyai">AssemblyAI</option>
+            <option value="sarvam">Sarvam (Saaras)</option>
             <option value="mock">Mock</option>
           </select>
         </div>
         <div>
           <label>Text-to-speech</label>
           <select id="ttsProvider">
-            <option value="fishaudio">Fish Audio (open source)</option>
             <option value="os">OS native voice</option>
+            <option value="elevenlabs">ElevenLabs</option>
+            <option value="sarvam">Sarvam (Bulbul)</option>
             <option value="mock">Mock (silent)</option>
           </select>
         </div>
       </div>
       <label>AssemblyAI API key</label>
       <input id="assemblyaiApiKey" type="password" autocomplete="off" />
+      <div class="row">
+        <div>
+          <label>ElevenLabs API key</label>
+          <input id="elevenlabsApiKey" type="password" autocomplete="off" />
+        </div>
+        <div>
+          <label>ElevenLabs voice id</label>
+          <input id="elevenlabsVoiceId" placeholder="21m00Tcm4TlvDq8ikWAM" />
+        </div>
+      </div>
       <div class="row">
         <div>
           <label>OS voice name (optional)</label>
@@ -111,47 +123,15 @@
           <input id="language" />
         </div>
       </div>
-
       <div class="row">
         <div>
-          <label>Whisper binary (whisper-cli)</label>
-          <input id="whisperCliPath" placeholder="auto-detect if blank" />
-          <div class="hint">Local open-source STT. Point at whisper-cli.exe (or leave blank to search PATH). Falls back to OS voice if missing.</div>
+          <label>Sarvam API key (Saaras STT + Bulbul TTS)</label>
+          <input id="sarvamApiKey" type="password" placeholder="sk_..." autocomplete="off" />
         </div>
         <div>
-          <label>Whisper model (ggml-*.bin)</label>
-          <input id="whisperModelPath" placeholder="auto-detect if blank" />
-          <div class="hint">e.g. ggml-base.en.bin. Download from whisper.cpp models.</div>
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label>Whisper language</label>
-          <input id="whisperLanguage" placeholder="en" />
-          <div class="hint">ISO code, or "auto" to detect.</div>
-        </div>
-        <div></div>
-      </div>
-
-      <div class="row">
-        <div>
-          <label>Fish Audio base URL (self-host)</label>
-          <input id="fishAudioBaseUrl" placeholder="http://localhost:8080" />
-          <div class="hint">Open-source Fish Speech server. Leave blank to use hosted fish.audio.</div>
-        </div>
-        <div>
-          <label>Fish Audio API key (hosted)</label>
-          <input id="fishAudioApiKey" type="password" autocomplete="off" />
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label>Fish Audio model / voice id</label>
-          <input id="fishAudioModelId" placeholder="hosted model id" />
-        </div>
-        <div>
-          <label>Fish Audio reference id (optional)</label>
-          <input id="fishAudioReferenceId" />
+          <label>Sarvam voice (speaker)</label>
+          <input id="sarvamSpeaker" placeholder="shubh" />
+          <div class="hint">bulbul:v3 names: shubh, aditya, ritu, priya, neha...</div>
         </div>
       </div>
 

@@ -4,5 +4,8 @@ node_modules/
 dist/
 build/
 boot.log
-models/
-*.log
+
+# Large downloadable model weights (exceed GitHub's 100 MB per-file limit).
+# Fetched/placed at runtime; never committed.
+clicky-mvp/models/
+*.bin

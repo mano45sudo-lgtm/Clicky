@@ -14,9 +14,9 @@ guardrails mean it can never click *Send* or delete something without your OK.
 ## The loop
 
 ```
-hold hotkey -> speak -> transcribe (Whisper, local) -> brain (Groq) plans tools
+hold hotkey -> speak -> transcribe (Sarvam) -> brain (Groq) plans tools
 -> UI Automation clicks + SendKeys typing + CDP web automation
--> every step verified, progress shown beside the cursor, result spoken back (Fish Audio)
+-> every step verified, progress shown beside the cursor, result spoken back
 ```
 
 Three ways to use it:
@@ -73,13 +73,7 @@ Settings or a `.env` file — `.env` only seeds first-run defaults):
 | --- | --- |
 | `GROQ_API_KEY` | The brain (planning + tool calling). |
 | `GEMINI_API_KEY` | The eyes (screen vision; also locate fallback). |
-
-Speech is **open source by default** and needs no key:
-
-- **STT (voice in)** - **Whisper**, running locally via [whisper.cpp](https://github.com/ggml-org/whisper.cpp). Download a `whisper-cli` build and a small model (e.g. `ggml-base.en.bin`), then set their paths in **Settings → Speech** (or `WHISPER_CLI` / `WHISPER_MODEL` in `.env`). If Whisper isn't found, Clicky automatically falls back to the built-in Windows voice recognition.
-- **TTS (voice out)** - **Fish Audio / Fish Speech**. Either self-host the open-source server and set its base URL (e.g. `http://localhost:8080`), or use the hosted fish.audio API (`FISH_AUDIO_API_KEY` + `FISH_AUDIO_MODEL`). With neither configured, Clicky speaks with the built-in Windows voice.
-
-AssemblyAI stays available in Settings as an optional cloud STT. Sarvam and ElevenLabs have been removed - the speech stack is now Whisper (in) + Fish Audio (out), both open source, with the Windows voice as the automatic fallback.
+| `SARVAM_API_KEY` | The voice (Sarvam STT + TTS, great for Indian languages). |
 
 Settings are saved to `clicky-settings.json` in your user data folder (never
 committed). Provider choices are grouped in Settings under Voice, Brain, Vision,
@@ -103,8 +97,8 @@ Control, Guardrails, and Privacy.
 - Screenshots are sent **only** to the vision provider you chose (Gemini) at the
   moment of a question or a locate call — they are not stored by us and never
   uploaded anywhere else.
-- Audio is transcribed locally by default (Windows SAPI) or by local Whisper
-  (whisper.cpp); either way recordings never leave your machine and are not persisted.
+- Audio is transcribed locally by default (Windows SAPI) or via Sarvam if you
+  pick it; recordings are not persisted.
 - All logs (`clicky.log`, rotating 5 MB) stay in your local app-data logs
   folder. Settings, history, notes, and reminders are plain local files.
 - No telemetry, no accounts, no server of our own.
@@ -146,7 +140,7 @@ greatly reduces AV noise.
 - `services/providers.js` / `llm.js` - Groq (brain) + Gemini (eyes, incl. fast
   locate mode); strict-JSON tool planning.
 - `services/stt*.js` / `tts*.js` + `assets/stt.ps1` / `tts.ps1` - speech in/out
-  (local Whisper + Fish Audio, with OS SAPI fallback).
+  (Sarvam or OS SAPI).
 - `services/capture.js` / `overlays.js` / `hotkey.js` - screenshots, per-display
   overlays, hold-to-talk.
 - `services/log.js` - structured rotating file log (`clicky.log`).

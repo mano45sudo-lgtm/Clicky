@@ -9,8 +9,7 @@
     "start": "electron .",
     "build": "electron-builder",
     "dist": "electron-builder --win",
-    "test:smoke": "node scripts/smoke.js",
-    "get:whisper": "node scripts/get-whisper-model.js"
+    "test:smoke": "node scripts/smoke.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

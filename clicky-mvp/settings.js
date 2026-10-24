@@ -1,8 +1,7 @@
 const FIELDS = [
-  'provider', 'visionProvider', 'geminiApiKey', 'anthropicApiKey', 'groqApiKey', 'geminiModel', 'anthropicModel', 'groqModel',
-  'sttProvider', 'ttsProvider', 'assemblyaiApiKey',
-  'whisperCliPath', 'whisperModelPath', 'whisperLanguage',
-  'fishAudioApiKey', 'fishAudioBaseUrl', 'fishAudioModelId', 'fishAudioReferenceId',
+  'provider', 'visionProvider', 'geminiApiKey', 'anthropicApiKey', 'sarvamApiKey', 'groqApiKey', 'geminiModel', 'anthropicModel', 'sarvamModel', 'groqModel',
+  'sttProvider', 'ttsProvider', 'assemblyaiApiKey', 'elevenlabsApiKey', 'elevenlabsVoiceId',
+  'sarvamSttModel', 'sarvamTtsModel', 'sarvamSpeaker',
   'voice', 'language', 'pttKeycode', 'toggleShortcut', 'conversationShortcut', 'vadSilenceMs', 'agentShortcut',
   'stopShortcut', 'agentAllowlist',
   'webSearchProvider', 'serperApiKey', 'braveApiKey',

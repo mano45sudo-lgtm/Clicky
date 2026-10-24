@@ -7,8 +7,8 @@ All notable changes to HeyClicky are documented here.
 Launch-readiness milestone release for Windows.
 
 ### Added
-- **Voice loop**: push-to-talk (hold Left Ctrl), local Whisper STT, Groq brain,
-  Gemini vision, Fish Audio TTS (OS voice fallback); command window and per-goal agent.
+- **Voice loop**: push-to-talk (hold Left Ctrl), Sarvam STT, Groq brain,
+  Gemini vision, Sarvam/Bulbul TTS; command window and per-goal agent.
 - **Acting agent** with 23 tools: openApp, clickOnScreen, typeInto, typeText,
   pressKey, runCommand, captureScreen, webSearch, file tools, notes, reminders,
   email drafts, drawing, and browser tools (navigate/click/type).
